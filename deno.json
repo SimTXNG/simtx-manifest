@@ -1,0 +1,9 @@
+{
+  "tasks": {
+    "dev": "deno run --watch --allow-read --allow-write --allow-net --allow-env index.ts",
+    "prod": "deno run --allow-read --allow-write --allow-net --allow-env index.ts"
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1"
+  }
+}
