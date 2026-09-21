@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SimTX — Download</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    font-family: ui-sans-system, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
+    color: #eef2ff; background: #070b16;
+    background-image:
+      radial-gradient(700px 400px at 50% 0%, rgba(34,211,238,.18), transparent 65%),
+      radial-gradient(600px 400px at 50% 110%, rgba(167,139,250,.16), transparent 65%);
+  }
+  .card {
+    width: min(420px, calc(100vw - 32px));
+    text-align: center;
+    border: 1px solid rgba(255,255,255,.12); border-radius: 24px;
+    padding: 36px 28px;
+    background: rgba(255,255,255,.05);
+    box-shadow: 0 24px 70px rgba(0,0,0,.5);
+  }
+  h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -.02em; }
+  .status { color: #9aa4c0; font-size: 13.5px; margin: 0 0 24px; line-height: 1.6; }
+  .status b { color: #eef2ff; }
+  #dl {
+    display: block; text-decoration: none;
+    padding: 16px; border-radius: 14px;
+    font-size: 17px; font-weight: 800; color: #04121a;
+    background: linear-gradient(90deg, #22d3ee, #a78bfa);
+  }
+  #dl:hover { filter: brightness(1.07); }
+  #dl small { display: block; font-size: 12px; font-weight: 600; opacity: .7; margin-top: 2px; }
+  .drop { position: relative; margin-top: 10px; }
+  #more {
+    width: 100%; cursor: pointer;
+    padding: 12px; border-radius: 14px;
+    background: transparent; color: #eef2ff;
+    border: 1px solid rgba(255,255,255,.16);
+    font-size: 14px; font-weight: 600;
+  }
+  #more:hover { border-color: rgba(255,255,255,.35); }
+  .menu {
+    display: none; position: absolute; top: calc(100% + 8px); left: 0; right: 0;
+    background: #0c1326; border: 1px solid rgba(255,255,255,.14);
+    border-radius: 14px; padding: 6px; z-index: 10;
+  }
+  .menu.open { display: block; }
+  .menu a {
+    display: block; padding: 11px; border-radius: 10px;
+    color: #eef2ff; text-decoration: none; font-size: 14px; font-weight: 600;
+  }
+  .menu a:hover { background: rgba(255,255,255,.08); }
+  .menu span { display: block; font-weight: 400; font-size: 12px; color: #9aa4c0; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>SimTX</h1>
+    <p class="status" id="status">Loading…</p>
+    <a id="dl" href="/latest/linux/amd64/deb">DOWNLOAD<small id="dl-sub"></small></a>
+    <div class="drop">
+      <button id="more" aria-haspopup="true" aria-expanded="false">More downloads ▾</button>
+      <div class="menu" id="menu">
+        <a href="/latest/linux/amd64/deb">Linux .deb<span>Debian / Ubuntu (amd64)</span></a>
+        <a href="/latest/linux/amd64/appimage">Linux .AppImage<span>Portable (amd64)</span></a>
+        <a href="/latest/windows/amd64/exe">Windows .exe<span>Windows 64-bit</span></a>
+      </div>
+    </div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// auto-detect: Windows -> .exe, else -> .deb
+const isWin = /Win/i.test(navigator.userAgent || "") || /Win/i.test(navigator.platform || "");
+const dl = $("dl"), sub = $("dl-sub");
+if (isWin) {
+  dl.href = "/latest/windows/amd64/exe";
+  dl.childNodes[0].textContent = "DOWNLOAD (.exe) ";
+  sub.textContent = "Windows 64-bit";
+} else {
+  dl.href = "/latest/linux/amd64/deb";
+  dl.childNodes[0].textContent = "DOWNLOAD (.deb) ";
+  sub.textContent = "Linux 64-bit";
+}
+
+// dropdown
+const btn = $("more"), menu = $("menu");
+btn.onclick = (e) => {
+  e.stopPropagation();
+  const open = menu.classList.toggle("open");
+  btn.setAttribute("aria-expanded", open);
+};
+document.onclick = () => menu.classList.remove("open");
+document.onkeydown = (e) => { if (e.key === "Escape") menu.classList.remove("open"); };
+
+// status: latest run + when built
+function rel(ts) {
+  const s = Math.max(1, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+  if (s < 60) return s + "s ago";
+  const m = Math.floor(s / 60); if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60); if (h < 24) return h + "h ago";
+  return Math.floor(h / 24) + "d ago";
+}
+fetch("/api/latest", { cache: "no-store" }).then(async (r) => {
+  if (!r.ok) throw 0;
+  const j = await r.json();
+  const t = j.newest_built_at || j.linux?.built_at || j.windows?.built_at;
+  const branch = j.linux?.branch || j.windows?.branch || "latest";
+  const ver = j.version ? "v" + j.version + " · " : "";
+  $("status").innerHTML = t
+    ? "<b>" + ver + branch + "</b><br>built " + rel(t)
+    : "<b>" + ver + branch + "</b>";
+}).catch(() => { $("status").textContent = "Status unavailable"; });
+</script>
+</body>
+</html>

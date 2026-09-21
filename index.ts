@@ -2,6 +2,8 @@
 //
 // Serves the build artifacts of simtxng/transmitter-go (GitHub Actions) as plain downloads:
 //
+//   /                              landing page (index.html)
+//   /api/latest                    JSON status for the landing page
 //   /latest/linux/amd64/deb        /<tag>/linux/amd64/deb
 //   /latest/linux/amd64/appimage   /<tag>/linux/amd64/appimage
 //   /latest/windows/amd64/exe      /<tag>/windows/amd64/exe
@@ -105,8 +107,79 @@ async function ghJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-type Run = { id: number; head_branch: string };
+type Run = {
+  id: number;
+  head_branch: string;
+  head_sha: string;
+  run_number: number;
+  display_title: string;
+  name: string;
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+};
 type RunList = { workflow_runs: Run[] };
+
+function runInfo(run: Run | null) {
+  if (!run) return null;
+  return {
+    id: run.id,
+    branch: run.head_branch,
+    sha: run.head_sha?.slice(0, 7) ?? null,
+    full_sha: run.head_sha ?? null,
+    run_number: run.run_number,
+    title: run.display_title || run.name,
+    url: run.html_url,
+    created_at: run.created_at,
+    built_at: run.updated_at,
+  };
+}
+
+async function latestStatus() {
+  const [linuxRun, windowsRun] = await Promise.all([
+    resolveRun(TARGETS.linux.workflow, "latest"),
+    resolveRun(TARGETS.windows.workflow, "latest"),
+  ]);
+  const linux = runInfo(linuxRun);
+  const windows = runInfo(windowsRun);
+  // newest build time across both platforms
+  const times = [linux?.built_at, windows?.built_at].filter(Boolean) as string[];
+  const newest = times.sort().at(-1) ?? null;
+  return {
+    version: VERSION_RETURN ?? null,
+    repo: REPO,
+    newest_built_at: newest,
+    linux,
+    windows,
+  };
+}
+
+const json = (data: unknown, status = 200) =>
+  new Response(JSON.stringify(data, null, 2) + "\n", {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "Cache-Control": "no-cache",
+    },
+  });
+
+let cachedIndex: Uint8Array | null = null;
+async function serveIndex(): Promise<Response> {
+  try {
+    // re-read in dev so edits show without restart; cheap for a small file
+    cachedIndex = await Deno.readFile(
+      new URL("./index.html", import.meta.url),
+    );
+  } catch {
+    if (!cachedIndex) throw new HttpError(404, "index.html not found");
+  }
+  return new Response(cachedIndex as unknown as BodyInit, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "Cache-Control": "no-cache",
+    },
+  });
+}
 
 async function findRun(workflow: string, ref: string): Promise<Run | null> {
   const wf = encodeURIComponent(workflow);
@@ -236,6 +309,27 @@ async function handle(req: Request): Promise<Response> {
       .map(decodeURIComponent);
   } catch {
     throw new HttpError(400, "Bad path");
+  }
+
+  // / -> beautiful landing page
+  if (
+    parts.length === 0 ||
+    (parts.length === 1 && parts[0].toLowerCase() === "index.html")
+  ) {
+    if (req.method === "HEAD") {
+      return new Response(null, {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+    return await serveIndex();
+  }
+
+  // /api/latest -> JSON used by the landing page
+  if (
+    parts.length === 2 && parts[0].toLowerCase() === "api" &&
+    (parts[1].toLowerCase() === "latest" || parts[1].toLowerCase() === "status")
+  ) {
+    return json(await latestStatus());
   }
 
   // /version -> the hardcoded release version from the VERSION_RETURN env var
