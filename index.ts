@@ -332,6 +332,12 @@ async function handle(req: Request): Promise<Response> {
     return json(await latestStatus());
   }
 
+  // /healthz -> liveness probe, no GitHub calls
+  if (parts.length === 1 && parts[0].toLowerCase() === "healthz") {
+    if (req.method === "HEAD") return new Response(null, { status: 200 });
+    return text("ok");
+  }
+
   // /version -> the hardcoded release version from the VERSION_RETURN env var
   if (parts.length === 1 && parts[0].toLowerCase() === "version") {
     if (!VERSION_RETURN)
