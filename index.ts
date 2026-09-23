@@ -4,9 +4,22 @@
 //
 //   /                              landing page (index.html)
 //   /api/latest                    JSON status for the landing page
-//   /latest/linux/amd64/deb        /<tag>/linux/amd64/deb
-//   /latest/linux/amd64/appimage   /<tag>/linux/amd64/appimage
-//   /latest/windows/amd64/exe      /<tag>/windows/amd64/exe
+//   /api/targets[/<ref>]           JSON availability map: which product/os/arch/kind
+//                                  downloads actually exist (default ref "latest")
+//
+//   Canonical (5 segments):
+//   /<ref>/<app|cli>/<linux|windows|macos>/<amd64|arm64>/<kind>
+//     app/linux:   deb | appimage | rpm | pkg.zst (aliases: pkg.tar.zst, arch)
+//     app/windows: exe
+//     app/macos:   dmg                             (arm64 only, styled DMG)
+//     cli/linux:   binary          (standalone simtx-cli, extensionless)
+//     cli/windows: binary | exe    (standalone simtx-cli.exe)
+//     cli/macos:   binary          (standalone simtx-cli, arm64)
+//     (linux/windows are amd64-only; macos is arm64-only)
+//
+//   Legacy (4 segments, still served):
+//   /<ref>/linux/amd64/deb | appimage
+//   /<ref>/windows/amd64/exe
 //
 //   /version                       returns the VERSION_RETURN env var as plain text
 //
@@ -20,11 +33,16 @@
 //   GITHUB_REPO        default simtxng/transmitter-go
 //   LINUX_WORKFLOW     default build-linux.yml
 //   WINDOWS_WORKFLOW   default build-windows.yml
+//   MACOS_WORKFLOW     default build-macos.yml
 //   PORT               default 8000
 //   HOST               default 0.0.0.0
 //   CACHE_DIR          default ./cache   (extracted files, keyed by workflow run id)
 //   LATEST_TTL         default 60        (seconds to cache the "latest" -> run lookup)
 //   TAG_TTL            default 300       (seconds to cache a tag -> run lookup)
+//   TARGETS_TTL        default 300       (seconds to cache the /api/targets availability map)
+//   PREFETCH           default 1         (download+extract latest artifacts on startup; 0 to disable)
+//   REFRESH_INTERVAL   default 300       (seconds between background refreshes; 0 to disable)
+//   CACHE_MAX_RUNS     default 10        (max cached run dirs on disk; 0 = unbounded)
 //   LATEST_REF         optional. Pin "latest" to one branch/tag (e.g. main) instead of any ref
 //   VERSION_RETURN     the version string /version returns, e.g. v0.0.1 (503 if unset)
 import { load } from "jsr:@std/dotenv";
@@ -48,26 +66,89 @@ const PORT = Number(env("PORT", "8000"));
 const CACHE_DIR = env("CACHE_DIR", "./cache")!;
 const LATEST_TTL = Number(env("LATEST_TTL", "60")) * 1000;
 const TAG_TTL = Number(env("TAG_TTL", "300")) * 1000;
+const TARGETS_TTL = Number(env("TARGETS_TTL", "300")) * 1000;
+const PREFETCH = env("PREFETCH", "1") !== "0";
+const REFRESH_INTERVAL = Number(env("REFRESH_INTERVAL", "300")) * 1000;
+const CACHE_MAX_RUNS = Number(env("CACHE_MAX_RUNS", "10"));
 const LATEST_REF = env("LATEST_REF");
 const VERSION_RETURN = env("VERSION_RETURN")?.trim();
 
-// os -> workflow file + (url kind -> file extension inside the artifact)
-const TARGETS: Record<
-  string,
-  { workflow: string; kinds: Record<string, string> }
-> = {
-  linux: {
-    workflow: env("LINUX_WORKFLOW", "build-linux.yml")!,
-    kinds: { deb: ".deb", appimage: ".appimage" },
-  },
-  windows: {
-    workflow: env("WINDOWS_WORKFLOW", "build-windows.yml")!,
-    kinds: { exe: ".exe" },
-  },
+// os -> workflow file. Product/kind -> file matcher inside the artifact.
+const WORKFLOWS: Record<string, string> = {
+  linux: env("LINUX_WORKFLOW", "build-linux.yml")!,
+  windows: env("WINDOWS_WORKFLOW", "build-windows.yml")!,
+  macos: env("MACOS_WORKFLOW", "build-macos.yml")!,
 };
 
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
-const WANTED_EXTS = [".deb", ".appimage", ".exe"];
+// Extensions collected out of artifact zips (lowercased match).
+const WANTED_EXTS = [".deb", ".appimage", ".exe", ".rpm", ".pkg.tar.zst", ".dmg"];
+// Extensionless Unix CLI binary (linux + macos) — matched by exact name, not ext.
+const CLI_UNIX_NAMES = ["simtx-cli"];
+const CLI_WINDOWS_NAMES = ["simtx-cli.exe"];
+
+const isCliUnix = (n: string) => CLI_UNIX_NAMES.includes(n.toLowerCase());
+const isCliWindows = (n: string) => CLI_WINDOWS_NAMES.includes(n.toLowerCase());
+
+// Returns true if `name` (original case) is the file wanted for product/os/kind.
+function matchesTarget(
+  product: string,
+  os: string,
+  kind: string,
+  name: string,
+): boolean {
+  const n = name.toLowerCase();
+  if (product === "cli") {
+    if (os === "linux" || os === "macos") return isCliUnix(n);
+    if (os === "windows") return isCliWindows(n);
+    return false;
+  }
+  // product === "app"
+  if (os === "linux") {
+    if (kind === "deb") return n.endsWith(".deb");
+    if (kind === "appimage") return n.endsWith(".appimage");
+    if (kind === "rpm") return n.endsWith(".rpm");
+    if (kind === "pkg.zst" || kind === "pkg.tar.zst" || kind === "arch") {
+      return n.endsWith(".pkg.tar.zst");
+    }
+    return false;
+  }
+  if (os === "windows") {
+    // GUI installer only — never the standalone CLI.
+    return n.endsWith(".exe") && !isCliWindows(n);
+  }
+  if (os === "macos") {
+    // Styled DMG holding the .app bundle (GUI + bundled CLI inside).
+    return n.endsWith(".dmg");
+  }
+  return false;
+}
+
+// Normalize kind aliases from the URL to canonical kinds.
+function normalizeKind(product: string, os: string, kind: string): string | null {
+  if (product === "app" && os === "linux") {
+    if (kind === "deb" || kind === "appimage" || kind === "rpm") return kind;
+    if (kind === "pkg.zst" || kind === "pkg.tar.zst" || kind === "arch") {
+      return "pkg.zst";
+    }
+    return null;
+  }
+  if (product === "app" && os === "windows") {
+    return kind === "exe" ? "exe" : null;
+  }
+  if (product === "app" && os === "macos") {
+    return kind === "dmg" ? "dmg" : null;
+  }
+  if (product === "cli" && (os === "linux" || os === "macos")) {
+    return kind === "binary" ? "binary" : null;
+  }
+  if (product === "cli" && os === "windows") {
+    if (kind === "binary") return "binary";
+    if (kind === "exe") return "binary";
+    return null;
+  }
+  return null;
+}
 
 class HttpError extends Error {
   constructor(
@@ -136,14 +217,18 @@ function runInfo(run: Run | null) {
 }
 
 async function latestStatus() {
-  const [linuxRun, windowsRun] = await Promise.all([
-    resolveRun(TARGETS.linux.workflow, "latest"),
-    resolveRun(TARGETS.windows.workflow, "latest"),
+  const [linuxRun, windowsRun, macosRun] = await Promise.all([
+    resolveRun(WORKFLOWS.linux, "latest"),
+    resolveRun(WORKFLOWS.windows, "latest"),
+    resolveRun(WORKFLOWS.macos, "latest"),
   ]);
   const linux = runInfo(linuxRun);
   const windows = runInfo(windowsRun);
-  // newest build time across both platforms
-  const times = [linux?.built_at, windows?.built_at].filter(Boolean) as string[];
+  const macos = runInfo(macosRun);
+  // newest build time across all platforms
+  const times = [linux?.built_at, windows?.built_at, macos?.built_at].filter(
+    Boolean,
+  ) as string[];
   const newest = times.sort().at(-1) ?? null;
   return {
     version: VERSION_RETURN ?? null,
@@ -151,6 +236,7 @@ async function latestStatus() {
     newest_built_at: newest,
     linux,
     windows,
+    macos,
   };
 }
 
@@ -162,6 +248,104 @@ const json = (data: unknown, status = 200) =>
       "Cache-Control": "no-cache",
     },
   });
+
+// ---------- availability (/api/targets) ----------
+
+type TargetDef = {
+  product: string;
+  os: string;
+  arch: string;
+  kind: string;
+};
+
+// Every downloadable target. URL kind == canonical kind here.
+const TARGET_DEFS: TargetDef[] = [
+  { product: "app", os: "linux", arch: "amd64", kind: "deb" },
+  { product: "app", os: "linux", arch: "amd64", kind: "rpm" },
+  { product: "app", os: "linux", arch: "amd64", kind: "pkg.zst" },
+  { product: "app", os: "linux", arch: "amd64", kind: "appimage" },
+  { product: "app", os: "windows", arch: "amd64", kind: "exe" },
+  { product: "app", os: "macos", arch: "arm64", kind: "dmg" },
+  { product: "cli", os: "linux", arch: "amd64", kind: "binary" },
+  { product: "cli", os: "windows", arch: "amd64", kind: "binary" },
+  { product: "cli", os: "macos", arch: "arm64", kind: "binary" },
+];
+
+const targetsCache = new Map<string, { data: unknown; expires: number }>();
+
+async function buildTargets(ref: string) {
+  const oss = Object.keys(WORKFLOWS);
+  const runs = await Promise.all(
+    oss.map(async (os) => ({ os, run: await resolveRun(WORKFLOWS[os], ref) })),
+  );
+  const targets = await Promise.all(
+    TARGET_DEFS.map(async (t) => {
+      const base = {
+        ...t,
+        url: `/${ref}/${t.product}/${t.os}/${t.arch}/${t.kind}`,
+      };
+      const run = runs.find((r) => r.os === t.os)?.run ?? null;
+      if (!run) {
+        return {
+          ...base,
+          available: false,
+          file: null,
+          size: null,
+          reason: "no successful build",
+        };
+      }
+      let names: string[] = [];
+      try {
+        const dir = await ensureExtracted(run.id);
+        for await (const entry of Deno.readDir(dir)) {
+          if (entry.isFile) names.push(entry.name);
+        }
+      } catch (e) {
+        return {
+          ...base,
+          available: false,
+          file: null,
+          size: null,
+          reason: (e as Error).message,
+        };
+      }
+      const file = names
+        .filter((n) => matchesTarget(t.product, t.os, t.kind, n))
+        .sort((a, b) => a.localeCompare(b))[0];
+      if (!file) {
+        return {
+          ...base,
+          available: false,
+          file: null,
+          size: null,
+          reason: "file missing from artifact",
+        };
+      }
+      const { size } = await Deno.stat(`${CACHE_DIR}/${run.id}/${file}`);
+      return { ...base, available: true, file, size, reason: null };
+    }),
+  );
+  return {
+    ref,
+    version: VERSION_RETURN ?? null,
+    stale: false,
+    targets,
+  };
+}
+
+async function getTargets(ref: string) {
+  const hit = targetsCache.get(ref);
+  if (hit && hit.expires > Date.now()) return hit.data;
+  try {
+    const data = await buildTargets(ref);
+    targetsCache.set(ref, { data, expires: Date.now() + TARGETS_TTL });
+    return data;
+  } catch (e) {
+    // Serve last-known-good rather than failing the page.
+    if (hit) return { ...(hit.data as Record<string, unknown>), stale: true };
+    throw e;
+  }
+}
 
 let cachedIndex: Uint8Array | null = null;
 async function serveIndex(): Promise<Response> {
@@ -225,7 +409,8 @@ async function downloadArtifact(id: number): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer());
 }
 
-// Pulls .deb/.AppImage/.exe out of a zip. If the artifact turns out to be
+// Pulls .deb/.rpm/.pkg.tar.zst/.AppImage/.exe + the extensionless
+// simtx-cli out of a zip. If the artifact turns out to be
 // double-zipped (a .zip inside GitHub's own zip), it recurses into the inner one.
 function collect(
   zip: Uint8Array,
@@ -235,7 +420,9 @@ function collect(
   const entries = unzipSync(zip, {
     filter: (f) => {
       const n = f.name.toLowerCase();
-      return n.endsWith(".zip") || WANTED_EXTS.some((e) => n.endsWith(e));
+      return n.endsWith(".zip") ||
+        WANTED_EXTS.some((e) => n.endsWith(e)) ||
+        isCliUnix(n.split("/").pop() ?? "");
     },
   });
   for (const [path, data] of Object.entries(entries)) {
@@ -280,7 +467,10 @@ async function extract(runId: number): Promise<string> {
 
   const files = collect(await downloadArtifact(artifact.id));
   if (Object.keys(files).length === 0) {
-    throw new HttpError(502, "Artifact contained no .deb/.AppImage/.exe files");
+    throw new HttpError(
+      502,
+      "Artifact contained no .deb/.rpm/.pkg.tar.zst/.AppImage/.exe/simtx-cli files",
+    );
   }
 
   // write to a temp dir, then rename so a half-written cache is never served
@@ -292,6 +482,51 @@ async function extract(runId: number): Promise<string> {
   }
   await Deno.rename(partial, dir);
   return dir;
+}
+
+// ---------- prefetch (warm cache so first visitors get local files) ----------
+
+// Downloads + extracts the latest artifacts for every workflow in the
+// background. Failures are logged, never thrown — serving stays up.
+async function prefetchLatest(reason: string): Promise<void> {
+  const jobs = Object.entries(WORKFLOWS).map(async ([os, workflow]) => {
+    try {
+      const run = await resolveRun(workflow, "latest");
+      if (!run) {
+        console.log(`[prefetch:${reason}] no successful ${os} build found`);
+        return;
+      }
+      await ensureExtracted(run.id);
+      console.log(`[prefetch:${reason}] warmed ${os} run ${run.id}`);
+    } catch (e) {
+      console.error(`[prefetch:${reason}] ${os} failed:`, (e as Error).message);
+    }
+  });
+  await Promise.all(jobs);
+  if (CACHE_MAX_RUNS > 0) {
+    try {
+      await pruneCache();
+    } catch (e) {
+      console.error("[prune] failed:", (e as Error).message);
+    }
+  }
+}
+
+// Keeps only the newest CACHE_MAX_RUNS cached run dirs on disk.
+async function pruneCache(): Promise<void> {
+  const entries: { name: string; mtime: number }[] = [];
+  for await (const entry of Deno.readDir(CACHE_DIR)) {
+    if (!entry.isDirectory || entry.name.endsWith(".partial")) continue;
+    if (!/^\d+$/.test(entry.name)) continue;
+    const mtime = (await Deno.stat(`${CACHE_DIR}/${entry.name}`)).mtime
+      ?.getTime() ?? 0;
+    entries.push({ name: entry.name, mtime });
+  }
+  entries.sort((a, b) => b.mtime - a.mtime);
+  for (const stale of entries.slice(CACHE_MAX_RUNS)) {
+    await Deno.remove(`${CACHE_DIR}/${stale.name}`, { recursive: true });
+    console.log(`[prune] removed cached run ${stale.name}`);
+  }
 }
 
 // ---------- HTTP ----------
@@ -332,6 +567,16 @@ async function handle(req: Request): Promise<Response> {
     return json(await latestStatus());
   }
 
+  // /api/targets[/<ref>] -> which downloads actually exist (used to hide missing ones)
+  if (
+    parts.length >= 2 && parts.length <= 3 &&
+    parts[0].toLowerCase() === "api" && parts[1].toLowerCase() === "targets"
+  ) {
+    const ref = parts.length === 3 ? parts[2] : "latest";
+    if (!VERSION_RE.test(ref)) throw new HttpError(400, "Invalid version");
+    return json(await getTargets(ref));
+  }
+
   // /healthz -> liveness probe, no GitHub calls
   if (parts.length === 1 && parts[0].toLowerCase() === "healthz") {
     if (req.method === "HEAD") return new Response(null, { status: 200 });
@@ -345,31 +590,85 @@ async function handle(req: Request): Promise<Response> {
     return text(VERSION_RETURN);
   }
 
-  if (parts.length !== 4) throw new HttpError(404, "Not found");
+  if (parts.length !== 4 && parts.length !== 5) {
+    throw new HttpError(404, "Not found");
+  }
 
-  const [ref, osRaw, arch, kindRaw] = parts;
-  const os = osRaw.toLowerCase();
-  const kind = kindRaw.toLowerCase();
+  let ref: string;
+  let product: string;
+  let os: string;
+  let arch: string;
+  let kind: string;
+
+  if (parts.length === 4) {
+    // Legacy: /<ref>/<os>/<arch>/<kind> (app only)
+    const [refRaw, osRaw, archRaw, kindRaw] = parts;
+    ref = refRaw;
+    product = "app";
+    os = osRaw.toLowerCase();
+    arch = archRaw.toLowerCase();
+    kind = kindRaw.toLowerCase();
+  } else {
+    // Canonical: /<ref>/<app|cli>/<os>/<arch>/<kind>
+    const [refRaw, productRaw, osRaw, archRaw, kindRaw] = parts;
+    ref = refRaw;
+    product = productRaw.toLowerCase();
+    os = osRaw.toLowerCase();
+    arch = archRaw.toLowerCase();
+    kind = kindRaw.toLowerCase();
+    if (product !== "app" && product !== "cli") {
+      throw new HttpError(404, "Not found");
+    }
+  }
 
   if (!VERSION_RE.test(ref)) throw new HttpError(400, "Invalid version");
-  if (arch !== "amd64" && arch !== "x86_64")
+  if (os !== "linux" && os !== "windows" && os !== "macos") {
+    throw new HttpError(404, "Not found");
+  }
+  // Platform/arch matrix: linux+windows ship amd64, macos ships arm64 (Apple Silicon).
+  const archNorm = arch === "x86_64"
+    ? "amd64"
+    : arch === "aarch64"
+    ? "arm64"
+    : arch;
+  if (os === "macos") {
+    if (archNorm !== "arm64") {
+      throw new HttpError(404, "macOS is arm64 (Apple Silicon) only");
+    }
+  } else if (archNorm !== "amd64") {
+    if (archNorm === "arm64") {
+      throw new HttpError(404, `${os} arm64 is not available yet`);
+    }
     throw new HttpError(404, "Only amd64 is available");
-  const target = TARGETS[os];
-  const ext = target?.kinds[kind];
-  if (!target || !ext) throw new HttpError(404, "Not found");
+  }
+  const workflow = WORKFLOWS[os];
+  if (!workflow) throw new HttpError(404, "Not found");
+  const canonicalKind = normalizeKind(product, os, kind);
+  if (!canonicalKind) throw new HttpError(404, "Not found");
 
-  const run = await resolveRun(target.workflow, ref);
-  if (!run)
-    throw new HttpError(404, `No successful ${os} build found for "${ref}"`);
+  const run = await resolveRun(workflow, ref);
+  if (!run) {
+    throw new HttpError(
+      404,
+      `No successful ${os} build found for "${ref}"`,
+    );
+  }
 
   const dir = await ensureExtracted(run.id);
-  let file: string | undefined;
+  const names: string[] = [];
   for await (const entry of Deno.readDir(dir)) {
-    if (entry.isFile && entry.name.toLowerCase().endsWith(ext))
-      file = entry.name;
+    if (entry.isFile) names.push(entry.name);
   }
-  if (!file)
-    throw new HttpError(404, `No ${kind} in the ${ref} ${os} artifact`);
+  names.sort((a, b) => a.localeCompare(b));
+  const file = names.find((n) =>
+    matchesTarget(product, os, canonicalKind, n)
+  );
+  if (!file) {
+    throw new HttpError(
+      404,
+      `No ${kind} (${product}/${os}) in the ${ref} artifact`,
+    );
+  }
 
   const path = `${dir}/${file}`;
   const { size } = await Deno.stat(path);
@@ -386,6 +685,15 @@ async function handle(req: Request): Promise<Response> {
 }
 
 await Deno.mkdir(CACHE_DIR, { recursive: true });
+
+// Warm the cache in the background so the first visitor downloads from disk,
+// then keep it fresh on an interval. Never blocks serving.
+if (PREFETCH) {
+  prefetchLatest("startup");
+  if (REFRESH_INTERVAL > 0) {
+    setInterval(() => prefetchLatest("refresh"), REFRESH_INTERVAL);
+  }
+}
 
 Deno.serve(
   {
