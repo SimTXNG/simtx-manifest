@@ -211,7 +211,6 @@ chmod +x simtx-cli
 <script>
 const $ = (id) => document.getElementById(id);
 
-// platform detect -> canonical target key (product/os/arch/kind)
 const ua = (navigator.userAgent || "") + " " + (navigator.platform || "");
 const isWin = /Win/i.test(ua);
 const isMac = /Mac/i.test(ua);
@@ -225,7 +224,6 @@ const PRIMARY_LABEL = isWin
   : isMac
   ? "DOWNLOAD (.dmg) — macOS Apple Silicon"
   : "DOWNLOAD (.deb) — Linux 64-bit";
-// fallback order if the detected build doesn't exist yet (app first, then CLI)
 const FALLBACK_ORDER = [PRIMARY,
   "app/windows/amd64/exe", "app/macos/arm64/dmg", "app/linux/amd64/deb",
   "app/linux/amd64/appimage", "app/linux/amd64/rpm", "app/linux/amd64/pkg.zst",
@@ -234,7 +232,6 @@ const dl = $("dl");
 dl.href = "/latest/" + PRIMARY;
 dl.textContent = PRIMARY_LABEL;
 
-// availability: hide builds that don't exist, retarget primary CTA
 fetch("/api/targets", { cache: "no-store" }).then(async (r) => {
   if (!r.ok) throw 0;
   const j = await r.json();
@@ -252,9 +249,8 @@ fetch("/api/targets", { cache: "no-store" }).then(async (r) => {
     dl.href = "/latest/" + pick;
     if (pick !== PRIMARY) dl.textContent = "DOWNLOAD — " + pick.split("/").pop();
   }
-}).catch(() => { /* show everything on probe failure */ });
+}).catch(() => {});
 
-// status: latest run + when built
 function rel(ts) {
   const s = Math.max(1, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
   if (s < 60) return s + "s ago";
