@@ -54,3 +54,15 @@ Deno.test("collect: junk-only zip yields empty set", () => {
   const zip = zipSync({ "notes.txt": bin("x"), "log/output.log": bin("y") });
   assertEquals(collect(zip), {});
 });
+
+Deno.test("collect: keeps appimage zsync + sha256 sidecars", () => {
+  const zip = zipSync({
+    "dist/simtx-x86_64.AppImage": bin("img"),
+    "dist/simtx-x86_64.AppImage.zsync": bin("zsync"),
+    "dist/simtx-x86_64.AppImage.sha256": bin("hash"),
+  });
+  const out = collect(zip);
+  assert("simtx-x86_64.AppImage" in out);
+  assert("simtx-x86_64.AppImage.zsync" in out);
+  assert("simtx-x86_64.AppImage.sha256" in out);
+});

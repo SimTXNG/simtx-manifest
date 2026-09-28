@@ -186,8 +186,7 @@ Deno.test("routes: no successful build -> 404", async () => {
   });
 });
 
-Deno.test("routes: api/latest shape + status alias", async () => {
-  await withTempDir(async (dir) => {
+Deno.test("routes: api/latest shape + status alias", async () => {  await withTempDir(async (dir) => {
     const byWorkflow = (wf: string) =>
       wf.includes("linux")
         ? makeRun({ id: 1, updated_at: "2026-01-01T00:00:00Z" })
@@ -211,5 +210,105 @@ Deno.test("routes: api/latest shape + status alias", async () => {
       assertEquals(body.repo, "o/r");
       assertEquals(body.newest_built_at, "2026-03-01T00:00:00Z");
     }
+  });
+});
+
+Deno.test("routes: appimage-zsync + sha256 kinds, range 206/416, accept-ranges", async () => {
+  await withTempDir(async (dir) => {
+    const runId = 777;
+    await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
+    const enc = new TextEncoder();
+    await Deno.writeFile(`${dir}/${runId}/simtx-x86_64.AppImage`, enc.encode("0123456789"));
+    await Deno.writeFile(
+      `${dir}/${runId}/simtx-x86_64.AppImage.zsync`,
+      enc.encode("zsync-data"),
+    );
+    await Deno.writeFile(
+      `${dir}/${runId}/simtx-x86_64.AppImage.sha256`,
+      enc.encode("deadbeef ".padEnd(65, "0") + " simtx-x86_64.AppImage\n"),
+    );
+    const run = makeRun({ id: runId, head_branch: "main" });
+    const ctx = testCtx(dir, {
+      fetchImpl: () => Promise.resolve(runsResponse([run])),
+    });
+
+    const zsync = await ctx.app.handle(req("/latest/app/linux/amd64/appimage-zsync"));
+    assertEquals(zsync.status, 200);
+    assertEquals(zsync.headers.get("accept-ranges"), "bytes");
+    assertEquals(await zsync.text(), "zsync-data");
+
+    const sha = await ctx.app.handle(req("/latest/app/linux/amd64/appimage-sha256"));
+    assertEquals(sha.status, 200);
+    assertStringIncludes(await sha.text(), "simtx-x86_64.AppImage");
+
+    const full = await ctx.app.handle(req("/latest/app/linux/amd64/appimage"));
+    assertEquals(full.status, 200);
+    assertEquals(full.headers.get("accept-ranges"), "bytes");
+
+    const part = await ctx.app.handle(req("/latest/app/linux/amd64/appimage", {
+      headers: { Range: "bytes=2-5" },
+    }));
+    assertEquals(part.status, 206);
+    assertEquals(part.headers.get("content-range"), "bytes 2-5/10");
+    assertEquals(await part.text(), "2345");
+
+    const bad = await ctx.app.handle(req("/latest/app/linux/amd64/appimage", {
+      headers: { Range: "bytes=50-60" },
+    }));
+    assertEquals(bad.status, 416);
+  });
+});
+
+Deno.test("routes: api/updates/latest shape + version-unset 503", async () => {
+  await withTempDir(async (dir) => {
+    const runId = 778;
+    await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
+    const enc = new TextEncoder();
+    await Deno.writeFile(`${dir}/${runId}/simtx-x86_64.AppImage`, enc.encode("img"));
+    await Deno.writeFile(
+      `${dir}/${runId}/simtx-x86_64.AppImage.zsync`,
+      enc.encode("z"),
+    );
+    const hash = "a".repeat(64);
+    await Deno.writeFile(
+      `${dir}/${runId}/simtx-x86_64.AppImage.sha256`,
+      enc.encode(`${hash}  simtx-x86_64.AppImage\n`),
+    );
+    const run = makeRun({ id: runId, head_branch: "main" });
+    const ctx = testCtx(dir, {
+      versionReturn: "0.1.0-alpha-5",
+      fetchImpl: () => Promise.resolve(runsResponse([run])),
+    });
+    const res = await ctx.app.handle(req("/api/updates/latest"));
+    assertEquals(res.status, 200);
+    const body = await res.json() as Record<string, unknown>;
+    assertEquals(body["version"], "0.1.0-alpha-5");
+    assertEquals(body["appimage_url"], "/main/app/linux/amd64/appimage");
+    assertEquals(body["zsync_url"], "/main/app/linux/amd64/appimage-zsync");
+    assertEquals(body["sha256_url"], "/main/app/linux/amd64/appimage-sha256");
+    assertEquals(body["sha256"], hash);
+
+    const unset = testCtx(dir, {
+      fetchImpl: () => Promise.resolve(runsResponse([run])),
+    });
+    assertEquals((await unset.app.handle(req("/api/updates/latest"))).status, 503);
+  });
+});
+
+Deno.test("routes: zsync missing from old artifact -> 404", async () => {
+  await withTempDir(async (dir) => {
+    const runId = 779;
+    await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
+    await Deno.writeFile(
+      `${dir}/${runId}/simtx-x86_64.AppImage`,
+      new TextEncoder().encode("img"),
+    );
+    const ctx = testCtx(dir, {
+      fetchImpl: () => Promise.resolve(runsResponse([makeRun({ id: runId })])),
+    });
+    assertEquals(
+      (await ctx.app.handle(req("/v9/app/linux/amd64/appimage-zsync"))).status,
+      404,
+    );
   });
 });

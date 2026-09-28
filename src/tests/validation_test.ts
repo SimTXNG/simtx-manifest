@@ -195,7 +195,7 @@ Deno.test("GitHub payload schemas: reject malformed data", () => {
 });
 
 Deno.test("TargetDefSchema: shipped table entries are all valid", () => {
-  assertEquals(TARGET_DEFS.length, 9);
+  assertEquals(TARGET_DEFS.length, 11);
   for (const t of TARGET_DEFS) {
     assert(TargetDefSchema.safeParse(t).success, JSON.stringify(t));
   }

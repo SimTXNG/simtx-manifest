@@ -24,6 +24,9 @@ export type { Run, RunList, TargetDef };
 export const WANTED_EXTS = [
   ".deb",
   ".appimage",
+  ".appimage.zsync",
+  ".appimage.sha256",
+  ".sha256",
   ".exe",
   ".rpm",
   ".pkg.tar.zst",
@@ -51,7 +54,15 @@ export function matchesTarget(
   }
   if (os === "linux") {
     if (kind === "deb") return n.endsWith(".deb");
-    if (kind === "appimage") return n.endsWith(".appimage");
+    if (kind === "appimage") {
+      return n.endsWith(".appimage") && !n.endsWith(".appimage.zsync") &&
+        !n.endsWith(".appimage.sha256");
+    }
+    if (kind === "appimage-zsync") return n.endsWith(".appimage.zsync");
+    if (kind === "appimage-sha256") {
+      return n.endsWith(".appimage.sha256") ||
+        (n.endsWith(".sha256") && n.includes(".appimage"));
+    }
     if (kind === "rpm") return n.endsWith(".rpm");
     if (kind === "pkg.zst" || kind === "pkg.tar.zst" || kind === "arch") {
       return n.endsWith(".pkg.tar.zst");
@@ -102,6 +113,8 @@ export const TARGET_DEFS: TargetDef[] = TargetDefSchema.array().parse([
   { product: "app", os: "linux", arch: "amd64", kind: "rpm" },
   { product: "app", os: "linux", arch: "amd64", kind: "pkg.zst" },
   { product: "app", os: "linux", arch: "amd64", kind: "appimage" },
+  { product: "app", os: "linux", arch: "amd64", kind: "appimage-zsync" },
+  { product: "app", os: "linux", arch: "amd64", kind: "appimage-sha256" },
   { product: "app", os: "windows", arch: "amd64", kind: "exe" },
   { product: "app", os: "macos", arch: "arm64", kind: "dmg" },
   { product: "cli", os: "linux", arch: "amd64", kind: "binary" },
@@ -426,6 +439,68 @@ export function createApp(opts: AppOptions) {
     }
   }
 
+  function parseRange(
+    header: string | null,
+    size: number,
+  ): { start: number; end: number } | null | "invalid" {
+    if (!header) return null;
+    const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+    if (!m) return "invalid";
+    let start: number;
+    let end: number;
+    if (m[1] === "" && m[2] === "") return "invalid";
+    if (m[1] === "") {
+      const suffix = Number(m[2]);
+      if (!Number.isSafeInteger(suffix) || suffix <= 0) return "invalid";
+      start = Math.max(0, size - suffix);
+      end = size - 1;
+    } else {
+      start = Number(m[1]);
+      end = m[2] === "" ? size - 1 : Number(m[2]);
+      if (
+        !Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+        start >= size || end >= size || start > end
+      ) return "invalid";
+    }
+    return { start, end };
+  }
+
+  async function latestUpdateInfo() {
+    if (!VERSION_RETURN) {
+      throw new HttpError(503, "VERSION_RETURN is not configured");
+    }
+    const run = await resolveRun(WORKFLOWS.linux, "latest");
+    if (!run) throw new HttpError(404, "No successful linux build found");
+    const dir = await ensureExtracted(run.id);
+    const names: string[] = [];
+    for await (const entry of Deno.readDir(dir)) {
+      if (entry.isFile) names.push(entry.name);
+    }
+    names.sort((a, b) => a.localeCompare(b));
+    const appimage = names.find((n) => matchesTarget("app", "linux", "appimage", n)) ?? null;
+    const zsync = names.find((n) => matchesTarget("app", "linux", "appimage-zsync", n)) ?? null;
+    const shaFile = names.find((n) => matchesTarget("app", "linux", "appimage-sha256", n)) ?? null;
+    let sha256: string | null = null;
+    if (shaFile) {
+      const raw = (await Deno.readTextFile(`${dir}/${shaFile}`)).trim().split(/\s+/)[0] ?? "";
+      sha256 = /^[0-9a-fA-F]{64}$/.test(raw) ? raw.toLowerCase() : null;
+    }
+    const ref = run.head_branch;
+    const url = (kind: string) => `/${ref}/app/linux/amd64/${kind}`;
+    return {
+      version: VERSION_RETURN,
+      ref,
+      built_at: run.updated_at,
+      appimage: appimage,
+      appimage_url: appimage ? url("appimage") : null,
+      zsync: zsync,
+      zsync_url: zsync ? url("appimage-zsync") : null,
+      sha256_file: shaFile,
+      sha256_url: shaFile ? url("appimage-sha256") : null,
+      sha256,
+    };
+  }
+
   async function serveDownload(
     refRaw: string,
     productRaw: string,
@@ -433,6 +508,7 @@ export function createApp(opts: AppOptions) {
     archRaw: string,
     kindRaw: string,
     isHead: boolean,
+    rangeHeader: string | null = null,
   ): Promise<Response> {
     const { ref, product, os, kind } = parseOr422(
       DownloadParamsSchema,
@@ -472,15 +548,48 @@ export function createApp(opts: AppOptions) {
 
     const path = `${dir}/${file}`;
     const { size } = await Deno.stat(path);
-    const headers = new Headers({
+    const cacheControl = ref === "latest"
+      ? "no-cache"
+      : "public, max-age=31536000, immutable";
+    const baseHeaders = {
       "Content-Type": "application/octet-stream",
-      "Content-Length": String(size),
       "Content-Disposition": `attachment; filename="${file}"`,
       "X-Release-Ref": run.head_branch,
-      "Cache-Control":
-        ref === "latest" ? "no-cache" : "public, max-age=31536000, immutable",
+      "Cache-Control": cacheControl,
+      "Accept-Ranges": "bytes",
+    };
+    if (isHead) {
+      return new Response(null, {
+        headers: { ...baseHeaders, "Content-Length": String(size) },
+      });
+    }
+    const range = parseRange(rangeHeader, size);
+    if (range === "invalid") {
+      return new Response("Range not satisfiable\n", {
+        status: 416,
+        headers: {
+          ...baseHeaders,
+          "Content-Range": `bytes */${size}`,
+          "content-type": "text/plain; charset=utf-8",
+        },
+      });
+    }
+    if (range) {
+      const len = range.end - range.start + 1;
+      const data = (await Deno.readFile(path)).slice(range.start, range.end + 1);
+      return new Response(data, {
+        status: 206,
+        headers: {
+          ...baseHeaders,
+          "Content-Length": String(len),
+          "Content-Range": `bytes ${range.start}-${range.end}/${size}`,
+        },
+      });
+    }
+    const headers = new Headers({
+      ...baseHeaders,
+      "Content-Length": String(size),
     });
-    if (isHead) return new Response(null, { headers });
     return new Response((await Deno.open(path)).readable, { headers });
   }
 
@@ -505,6 +614,7 @@ export function createApp(opts: AppOptions) {
     .get("/api/status", async () => json(await latestStatus()))
     .get("/api/targets", () => handleTargets("latest"))
     .get("/api/targets/:ref", ({ params }) => handleTargets(params.ref))
+    .get("/api/updates/latest", async () => json(await latestUpdateInfo()))
     .get("/healthz", () => text("ok"))
     .get("/version", () => {
       if (!VERSION_RETURN) {
@@ -512,7 +622,7 @@ export function createApp(opts: AppOptions) {
       }
       return text(VERSION_RETURN);
     })
-    .get("/:ref/:p1/:p2/:p3", ({ params }) =>
+    .get("/:ref/:p1/:p2/:p3", ({ params, request }) =>
       serveDownload(
         params.ref,
         "app",
@@ -520,8 +630,9 @@ export function createApp(opts: AppOptions) {
         params.p2,
         params.p3,
         false,
+        request.headers.get("range"),
       ))
-    .get("/:ref/:p1/:p2/:p3/:p4", ({ params }) =>
+    .get("/:ref/:p1/:p2/:p3/:p4", ({ params, request }) =>
       serveDownload(
         params.ref,
         params.p1,
@@ -529,6 +640,7 @@ export function createApp(opts: AppOptions) {
         params.p3,
         params.p4,
         false,
+        request.headers.get("range"),
       ))
     .head("/", () =>
       new Response(null, {
