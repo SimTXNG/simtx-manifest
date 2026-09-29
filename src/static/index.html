@@ -1,288 +1,587 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>SimTX — Download</title>
-<style>
-  :root {
-    color-scheme: dark;
-    --bg: #05080c;
-    --panel: #0a0e14;
-    --edge: #2c3842;
-    --cyan: #35b6c9;
-    --amber: #ffb000;
-    --text: #ebf0f2;
-    --grey: #949ea4;
-    --dim: #5a646e;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; min-width: 320px;
-    background: var(--bg); color: var(--text);
-    font-family: DejaVu Sans Mono, JetBrains Mono, Consolas, Menlo, monospace;
-    font-size: 15px; line-height: 1.65;
-  }
-  a { color: var(--cyan); }
-  a:hover { color: var(--text); }
-  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
-  .site-shell { background: var(--bg); min-height: 100vh; color: var(--text); }
-  .site-nav {
-    display: flex; align-items: center; justify-content: space-between; gap: 24px;
-    min-height: 54px; padding: 0 24px;
-    border-bottom: 1px solid var(--edge); background: var(--bg);
-  }
-  .site-nav a { text-decoration: none; }
-  .nav-brand { color: var(--text); font-weight: 700; }
-  .nav-links { display: flex; align-items: center; gap: 22px; }
-  .nav-links a { color: var(--grey); font-size: .9em; }
-  .nav-links a:hover { color: var(--cyan); }
-  .hero {
-    border-bottom: 1px solid var(--edge);
-    background:
-      radial-gradient(700px 380px at 50% 0%, rgba(53,182,201,.16), transparent 65%),
-      radial-gradient(600px 380px at 50% 110%, rgba(255,176,0,.08), transparent 65%);
-    overflow: hidden;
-  }
-  .hero-inner {
-    text-align: center; padding: 90px 20px 70px;
-    background: linear-gradient(#05080c8c, #05080c26 45%, #05080ce6);
-  }
-  .hero h1 { margin: 0; font-size: clamp(2rem, 6vw, 3rem); letter-spacing: -.03em; }
-  .tagline { margin: 26px 0 4px; font-size: 1.25em; font-weight: 700; text-wrap: balance; }
-  .subline { color: var(--cyan); margin: 0 0 34px; }
-  .subline b { color: var(--text); }
-  .actions { margin: 0; }
-  main { max-width: 720px; margin: 0 auto; padding: 40px 20px 20px; }
-  .panel {
-    position: relative; border: 1px solid var(--edge);
-    margin: 0 0 34px; padding: 26px 26px 18px; background: var(--panel);
-  }
-  .panel > h2 {
-    position: absolute; top: 0; left: 16px; transform: translateY(-50%);
-    margin: 0; padding: 0 10px; background: var(--bg);
-    color: var(--cyan); font-size: 1.05em; font-weight: 700;
-  }
-  .panel p, .panel li { color: var(--grey); }
-  .panel strong { color: var(--text); }
-  .panel code { color: var(--grey); overflow-wrap: anywhere; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 26px; }
-  .grid p { margin: 0 0 16px; }
-  .dl-item h3 { color: var(--text); margin: 0 0 2px; font-size: 1em; }
-  .dl-item h3 code { color: var(--text); }
-  .dl-item p { margin: 0 0 10px; font-size: .88em; }
-  .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 9px;
-    margin: 4px 6px; padding: 11px 26px;
-    background: var(--cyan); border: 1px solid var(--cyan); color: #04262b;
-    font: inherit; font-weight: 700; cursor: pointer; text-decoration: none;
-    transition: background .15s ease-out, border-color .15s ease-out;
-  }
-  .btn:hover { background: var(--text); border-color: var(--text); color: #04262b; }
-  .btn.ghost { background: transparent; border-color: var(--grey); color: var(--text); }
-  .btn.ghost:hover { border-color: var(--text); background: #ebf0f214; color: var(--text); }
-  .btn.small { padding: 8px 16px; font-size: .88em; margin: 0 0 6px; }
-  .release-meta { color: var(--dim); font-size: .88em; }
-  .release-meta code { color: var(--grey); }
-  .cli-note {
-    border-left: 2px solid var(--edge); padding-left: 12px; margin: 12px 0;
-    font-size: .88em;
-  }
-  pre.cmd {
-    border: 1px solid var(--edge); background: #020406; color: var(--grey);
-    padding: 12px 14px; font-size: .82em; overflow-x: auto; margin: 10px 0 16px;
-  }
-  .center { text-align: center; }
-  .site-footer {
-    text-align: center; color: var(--grey); font-size: .85em;
-    border-top: 1px solid var(--edge); padding: 25px 20px;
-  }
-  .site-footer a { color: var(--grey); }
-  @media (max-width: 620px) {
-    .grid { grid-template-columns: 1fr; }
-    .hero-inner { padding: 60px 16px 50px; }
-    .site-nav { align-items: flex-start; padding: 14px 16px; }
-    .nav-links { flex-wrap: wrap; justify-content: flex-end; gap: 8px 16px; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .btn { transition: none; }
-  }
-</style>
-</head>
-<body>
-<div class="site-shell">
-  <nav class="site-nav">
-    <a class="nav-brand" href="/">SimTX</a>
-    <div class="nav-links">
-      <a href="/install">Install</a>
-      <a href="#app">App</a>
-      <a href="#cli">CLI</a>
-      <a href="#release">Release</a>
-    </div>
-  </nav>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>SimTX Manifest — Download</title>
+        <style>
+            :root {
+                color-scheme: dark;
+                --bg: #05080c;
+                --panel: #0a0e14;
+                --edge: #2c3842;
+                --cyan: #35b6c9;
+                --amber: #ffb000;
+                --text: #ebf0f2;
+                --grey: #949ea4;
+                --dim: #5a646e;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            body {
+                margin: 0;
+                min-height: 100vh;
+                min-width: 320px;
+                background: var(--bg);
+                color: var(--text);
+                font-family:
+                    DejaVu Sans Mono,
+                    JetBrains Mono,
+                    Consolas,
+                    Menlo,
+                    monospace;
+                font-size: 15px;
+                line-height: 1.65;
+            }
+            a {
+                color: var(--cyan);
+            }
+            a:hover {
+                color: var(--text);
+            }
+            :focus-visible {
+                outline: 2px solid var(--amber);
+                outline-offset: 2px;
+            }
+            .site-shell {
+                background: var(--bg);
+                min-height: 100vh;
+                color: var(--text);
+            }
+            .site-nav {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 24px;
+                min-height: 54px;
+                padding: 0 24px;
+                border-bottom: 1px solid var(--edge);
+                background: var(--bg);
+            }
+            .site-nav a {
+                text-decoration: none;
+            }
+            .nav-brand {
+                color: var(--text);
+                font-weight: 700;
+            }
+            .nav-links {
+                display: flex;
+                align-items: center;
+                gap: 22px;
+            }
+            .nav-links a {
+                color: var(--grey);
+                font-size: 0.9em;
+            }
+            .nav-links a:hover {
+                color: var(--cyan);
+            }
+            .hero {
+                border-bottom: 1px solid var(--edge);
+                background:
+                    radial-gradient(
+                        700px 380px at 50% 0%,
+                        rgba(53, 182, 201, 0.16),
+                        transparent 65%
+                    ),
+                    radial-gradient(
+                        600px 380px at 50% 110%,
+                        rgba(255, 176, 0, 0.08),
+                        transparent 65%
+                    );
+                overflow: hidden;
+            }
+            .hero-inner {
+                text-align: center;
+                padding: 90px 20px 70px;
+                background: linear-gradient(
+                    #05080c8c,
+                    #05080c26 45%,
+                    #05080ce6
+                );
+            }
+            .hero h1 {
+                margin: 0;
+                font-size: clamp(2rem, 6vw, 3rem);
+                letter-spacing: -0.03em;
+            }
+            .tagline {
+                margin: 26px 0 4px;
+                font-size: 1.25em;
+                font-weight: 700;
+                text-wrap: balance;
+            }
+            .subline {
+                color: var(--cyan);
+                margin: 0 0 34px;
+            }
+            .subline b {
+                color: var(--text);
+            }
+            .actions {
+                margin: 0;
+            }
+            main {
+                max-width: 720px;
+                margin: 0 auto;
+                padding: 40px 20px 20px;
+            }
+            .panel {
+                position: relative;
+                border: 1px solid var(--edge);
+                margin: 0 0 34px;
+                padding: 26px 26px 18px;
+                background: var(--panel);
+            }
+            .panel > h2 {
+                position: absolute;
+                top: 0;
+                left: 16px;
+                transform: translateY(-50%);
+                margin: 0;
+                padding: 0 10px;
+                background: var(--bg);
+                color: var(--cyan);
+                font-size: 1.05em;
+                font-weight: 700;
+            }
+            .panel p,
+            .panel li {
+                color: var(--grey);
+            }
+            .panel strong {
+                color: var(--text);
+            }
+            .panel code {
+                color: var(--grey);
+                overflow-wrap: anywhere;
+            }
+            .grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 4px 26px;
+            }
+            .grid p {
+                margin: 0 0 16px;
+            }
+            .dl-item h3 {
+                color: var(--text);
+                margin: 0 0 2px;
+                font-size: 1em;
+            }
+            .dl-item h3 code {
+                color: var(--text);
+            }
+            .dl-item p {
+                margin: 0 0 10px;
+                font-size: 0.88em;
+            }
+            .btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 9px;
+                margin: 4px 6px;
+                padding: 11px 26px;
+                background: var(--cyan);
+                border: 1px solid var(--cyan);
+                color: #04262b;
+                font: inherit;
+                font-weight: 700;
+                cursor: pointer;
+                text-decoration: none;
+                transition:
+                    background 0.15s ease-out,
+                    border-color 0.15s ease-out;
+            }
+            .btn:hover {
+                background: var(--text);
+                border-color: var(--text);
+                color: #04262b;
+            }
+            .btn.ghost {
+                background: transparent;
+                border-color: var(--grey);
+                color: var(--text);
+            }
+            .btn.ghost:hover {
+                border-color: var(--text);
+                background: #ebf0f214;
+                color: var(--text);
+            }
+            .btn.small {
+                padding: 8px 16px;
+                font-size: 0.88em;
+                margin: 0 0 6px;
+            }
+            .release-meta {
+                color: var(--dim);
+                font-size: 0.88em;
+            }
+            .release-meta code {
+                color: var(--grey);
+            }
+            .cli-note {
+                border-left: 2px solid var(--edge);
+                padding-left: 12px;
+                margin: 12px 0;
+                font-size: 0.88em;
+            }
+            pre.cmd {
+                border: 1px solid var(--edge);
+                background: #020406;
+                color: var(--grey);
+                padding: 12px 14px;
+                font-size: 0.82em;
+                overflow-x: auto;
+                margin: 10px 0 16px;
+            }
+            .center {
+                text-align: center;
+            }
+            .site-footer {
+                text-align: center;
+                color: var(--grey);
+                font-size: 0.85em;
+                border-top: 1px solid var(--edge);
+                padding: 25px 20px;
+            }
+            .site-footer a {
+                color: var(--grey);
+            }
+            @media (max-width: 620px) {
+                .grid {
+                    grid-template-columns: 1fr;
+                }
+                .hero-inner {
+                    padding: 60px 16px 50px;
+                }
+                .site-nav {
+                    align-items: flex-start;
+                    padding: 14px 16px;
+                }
+                .nav-links {
+                    flex-wrap: wrap;
+                    justify-content: flex-end;
+                    gap: 8px 16px;
+                }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .btn {
+                    transition: none;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="site-shell">
+            <nav class="site-nav">
+                <a class="nav-brand" href="/">SimTX Manifest</a>
+                <div class="nav-links">
+                    <a href="/install">Install</a>
+                    <a href="#app">App</a>
+                    <a href="#cli">CLI</a>
+                    <a href="#release">Release</a>
+                </div>
+            </nav>
 
-  <header class="hero">
-    <div class="hero-inner">
-      <h1>SimTX</h1>
-      <p class="tagline">Headless transmitter + desktop app</p>
-      <p class="subline" id="status">Loading…</p>
-      <p class="actions">
-        <a class="btn" id="dl" href="/latest/app/linux/amd64/deb">DOWNLOAD</a>
-        <a class="btn ghost" href="#app">All downloads</a>
-      </p>
-    </div>
-  </header>
+            <header class="hero">
+                <div class="hero-inner">
+                    <h1>SimTX</h1>
+                    <p class="tagline">Headless transmitter + desktop app</p>
+                    <p class="subline" id="status">Loading…</p>
+                    <p class="actions">
+                        <a
+                            class="btn"
+                            id="dl"
+                            href="/latest/app/linux/amd64/deb"
+                            >DOWNLOAD</a
+                        >
+                        <a class="btn ghost" href="#app">All downloads</a>
+                    </p>
+                </div>
+            </header>
 
-  <main>
-    <section class="panel" id="app">
-      <h2>Desktop app</h2>
-      <p>GUI installer / package for your platform. <strong>Windows gets the <code>.exe</code> installer, macOS the <code>.dmg</code> (Apple Silicon), Linux picks a format.</strong></p>
-      <div class="grid">
-        <div class="dl-item" data-target="app/linux/amd64/deb">
-          <h3>Linux <code>.deb</code></h3>
-          <p>Debian / Ubuntu (amd64)</p>
-          <a class="btn small" href="/latest/app/linux/amd64/deb">Download .deb</a>
-        </div>
-        <div class="dl-item" data-target="app/linux/amd64/rpm">
-          <h3>Linux <code>.rpm</code></h3>
-          <p>Fedora / RHEL / openSUSE (amd64)</p>
-          <a class="btn small" href="/latest/app/linux/amd64/rpm">Download .rpm</a>
-        </div>
-        <div class="dl-item" data-target="app/linux/amd64/pkg.zst">
-          <h3>Linux <code>.pkg.tar.zst</code></h3>
-          <p>Arch Linux (amd64)</p>
-          <a class="btn small" href="/latest/app/linux/amd64/pkg.zst">Download Arch</a>
-        </div>
-        <div class="dl-item" data-target="app/linux/amd64/appimage">
-          <h3>Linux <code>.AppImage</code></h3>
-          <p>Portable, no install (amd64)</p>
-          <a class="btn small" href="/latest/app/linux/amd64/appimage">Download .AppImage</a>
-        </div>
-        <div class="dl-item" data-target="app/windows/amd64/exe">
-          <h3>Windows <code>.exe</code></h3>
-          <p>Windows 64-bit installer (amd64)</p>
-          <a class="btn small" href="/latest/app/windows/amd64/exe">Download .exe</a>
-        </div>
-        <div class="dl-item" data-target="app/macos/arm64/dmg">
-          <h3>macOS <code>.dmg</code></h3>
-          <p>Apple Silicon (arm64)</p>
-          <a class="btn small" href="/latest/app/macos/arm64/dmg">Download .dmg</a>
-        </div>
-      </div>
-      <div class="cli-note">macOS builds are ad-hoc signed: on first open, right-click the app → <strong>Open</strong> to bypass the Gatekeeper warning.</div>
-    </section>
+            <main>
+                <section class="panel" id="app">
+                    <h2>Desktop app</h2>
+                    <p>
+                        GUI installer / package for your platform.
+                        <strong
+                            >Windows gets the <code>.exe</code> installer, macOS
+                            the <code>.dmg</code> (Apple Silicon), Linux picks a
+                            format.</strong
+                        >
+                    </p>
+                    <div class="grid">
+                        <div class="dl-item" data-target="app/linux/amd64/deb">
+                            <h3>Linux <code>.deb</code></h3>
+                            <p>Debian / Ubuntu (amd64)</p>
+                            <a
+                                class="btn small"
+                                href="/latest/app/linux/amd64/deb"
+                                >Download .deb</a
+                            >
+                        </div>
+                        <div class="dl-item" data-target="app/linux/amd64/rpm">
+                            <h3>Linux <code>.rpm</code></h3>
+                            <p>Fedora / RHEL / openSUSE (amd64)</p>
+                            <a
+                                class="btn small"
+                                href="/latest/app/linux/amd64/rpm"
+                                >Download .rpm</a
+                            >
+                        </div>
+                        <div
+                            class="dl-item"
+                            data-target="app/linux/amd64/pkg.zst"
+                        >
+                            <h3>Linux <code>.pkg.tar.zst</code></h3>
+                            <p>Arch Linux (amd64)</p>
+                            <a
+                                class="btn small"
+                                href="/latest/app/linux/amd64/pkg.zst"
+                                >Download Arch</a
+                            >
+                        </div>
+                        <div
+                            class="dl-item"
+                            data-target="app/linux/amd64/appimage"
+                        >
+                            <h3>Linux <code>.AppImage</code></h3>
+                            <p>Portable, no install (amd64)</p>
+                            <a
+                                class="btn small"
+                                href="/latest/app/linux/amd64/appimage"
+                                >Download .AppImage</a
+                            >
+                        </div>
+                        <div
+                            class="dl-item"
+                            data-target="app/windows/amd64/exe"
+                        >
+                            <h3>Windows <code>.exe</code></h3>
+                            <p>Windows 64-bit installer (amd64)</p>
+                            <a
+                                class="btn small"
+                                href="/latest/app/windows/amd64/exe"
+                                >Download .exe</a
+                            >
+                        </div>
+                        <div class="dl-item" data-target="app/macos/arm64/dmg">
+                            <h3>macOS <code>.dmg</code></h3>
+                            <p>Apple Silicon (arm64)</p>
+                            <a
+                                class="btn small"
+                                href="/latest/app/macos/arm64/dmg"
+                                >Download .dmg</a
+                            >
+                        </div>
+                    </div>
+                    <div class="cli-note">
+                        macOS builds are ad-hoc signed: on first open,
+                        right-click the app → <strong>Open</strong> to bypass
+                        the Gatekeeper warning.
+                    </div>
+                </section>
 
-    <section class="panel" id="cli">
-      <h2>Headless CLI — simtx-cli</h2>
-      <p>The headless transmitter (<code>simtx-cli</code> / <code>simtx-cli.exe</code>) ships <strong>bundled inside</strong> the installers above and as a <strong>standalone download</strong> below.</p>
-      <div class="grid">
-        <div class="dl-item" data-target="cli/linux/amd64/binary">
-          <h3>Linux <code>simtx-cli</code></h3>
-          <p>Standalone binary (amd64)</p>
-          <a class="btn small ghost" href="/latest/cli/linux/amd64/binary">Download CLI</a>
-        </div>
-        <div class="dl-item" data-target="cli/windows/amd64/binary">
-          <h3>Windows <code>simtx-cli.exe</code></h3>
-          <p>Standalone console exe (amd64)</p>
-          <a class="btn small ghost" href="/latest/cli/windows/amd64/binary">Download CLI .exe</a>
-        </div>
-        <div class="dl-item" data-target="cli/macos/arm64/binary">
-          <h3>macOS <code>simtx-cli</code></h3>
-          <p>Standalone binary (arm64)</p>
-          <a class="btn small ghost" href="/latest/cli/macos/arm64/binary">Download CLI</a>
-        </div>
-      </div>
-      <div class="cli-note">Native packages install the CLI to <code>/usr/local/bin/simtx-cli</code>. The AppImage carries it at <code>usr/bin/simtx-cli</code> (via <code>--appimage-mount</code> / <code>--appimage-extract</code>); the NSIS installer drops <code>simtx-cli.exe</code> next to the GUI exe.</div>
-      <pre class="cmd">curl -L -o simtx-cli /latest/cli/linux/amd64/binary
+                <section class="panel" id="cli">
+                    <h2>Headless CLI — simtx-cli</h2>
+                    <p>
+                        The headless transmitter (<code>simtx-cli</code> /
+                        <code>simtx-cli.exe</code>) ships
+                        <strong>bundled inside</strong> the installers above and
+                        as a <strong>standalone download</strong> below.
+                    </p>
+                    <div class="grid">
+                        <div
+                            class="dl-item"
+                            data-target="cli/linux/amd64/binary"
+                        >
+                            <h3>Linux <code>simtx-cli</code></h3>
+                            <p>Standalone binary (amd64)</p>
+                            <a
+                                class="btn small ghost"
+                                href="/latest/cli/linux/amd64/binary"
+                                >Download CLI</a
+                            >
+                        </div>
+                        <div
+                            class="dl-item"
+                            data-target="cli/windows/amd64/binary"
+                        >
+                            <h3>Windows <code>simtx-cli.exe</code></h3>
+                            <p>Standalone console exe (amd64)</p>
+                            <a
+                                class="btn small ghost"
+                                href="/latest/cli/windows/amd64/binary"
+                                >Download CLI .exe</a
+                            >
+                        </div>
+                        <div
+                            class="dl-item"
+                            data-target="cli/macos/arm64/binary"
+                        >
+                            <h3>macOS <code>simtx-cli</code></h3>
+                            <p>Standalone binary (arm64)</p>
+                            <a
+                                class="btn small ghost"
+                                href="/latest/cli/macos/arm64/binary"
+                                >Download CLI</a
+                            >
+                        </div>
+                    </div>
+                    <div class="cli-note">
+                        Native packages install the CLI to
+                        <code>/usr/local/bin/simtx-cli</code>. The AppImage
+                        carries it at <code>usr/bin/simtx-cli</code> (via
+                        <code>--appimage-mount</code> /
+                        <code>--appimage-extract</code>); the NSIS installer
+                        drops <code>simtx-cli.exe</code> next to the GUI exe.
+                    </div>
+                    <pre class="cmd">
+curl -L -o simtx-cli /latest/cli/linux/amd64/binary
 chmod +x simtx-cli
 ./simtx-cli --help</pre>
-    </section>
+                </section>
 
-    <section class="panel" id="release">
-      <h2>Release</h2>
-      <p class="release-meta" id="meta">Resolving latest build…</p>
-    </section>
-  </main>
+                <section class="panel" id="release">
+                    <h2>Release</h2>
+                    <p class="release-meta" id="meta">
+                        Resolving latest build…
+                    </p>
+                </section>
+            </main>
 
-  <footer class="site-footer">
-    <span>SimTX builds · </span><a href="/api/latest">api/latest</a> · <a href="/api/targets">api/targets</a>
-  </footer>
-</div>
+            <footer class="site-footer">
+                <span>SimTX builds · </span
+                ><a href="/api/latest">api/latest</a> ·
+                <a href="/api/targets">api/targets</a>
+            </footer>
+        </div>
 
-<script>
-const $ = (id) => document.getElementById(id);
+        <script>
+            const $ = (id) => document.getElementById(id);
 
-const ua = (navigator.userAgent || "") + " " + (navigator.platform || "");
-const isWin = /Win/i.test(ua);
-const isMac = /Mac/i.test(ua);
-const PRIMARY = isWin
-  ? "app/windows/amd64/exe"
-  : isMac
-  ? "app/macos/arm64/dmg"
-  : "app/linux/amd64/deb";
-const PRIMARY_LABEL = isWin
-  ? "DOWNLOAD (.exe) — Windows 64-bit"
-  : isMac
-  ? "DOWNLOAD (.dmg) — macOS Apple Silicon"
-  : "DOWNLOAD (.deb) — Linux 64-bit";
-const FALLBACK_ORDER = [PRIMARY,
-  "app/windows/amd64/exe", "app/macos/arm64/dmg", "app/linux/amd64/deb",
-  "app/linux/amd64/appimage", "app/linux/amd64/rpm", "app/linux/amd64/pkg.zst",
-  "cli/windows/amd64/binary", "cli/macos/arm64/binary", "cli/linux/amd64/binary"];
-const dl = $("dl");
-dl.href = "/latest/" + PRIMARY;
-dl.textContent = PRIMARY_LABEL;
+            const ua =
+                (navigator.userAgent || "") + " " + (navigator.platform || "");
+            const isWin = /Win/i.test(ua);
+            const isMac = /Mac/i.test(ua);
+            const PRIMARY = isWin
+                ? "app/windows/amd64/exe"
+                : isMac
+                  ? "app/macos/arm64/dmg"
+                  : "app/linux/amd64/deb";
+            const PRIMARY_LABEL = isWin
+                ? "DOWNLOAD (.exe) — Windows 64-bit"
+                : isMac
+                  ? "DOWNLOAD (.dmg) — macOS Apple Silicon"
+                  : "DOWNLOAD (.deb) — Linux 64-bit";
+            const FALLBACK_ORDER = [
+                PRIMARY,
+                "app/windows/amd64/exe",
+                "app/macos/arm64/dmg",
+                "app/linux/amd64/deb",
+                "app/linux/amd64/appimage",
+                "app/linux/amd64/rpm",
+                "app/linux/amd64/pkg.zst",
+                "cli/windows/amd64/binary",
+                "cli/macos/arm64/binary",
+                "cli/linux/amd64/binary",
+            ];
+            const dl = $("dl");
+            dl.href = "/latest/" + PRIMARY;
+            dl.textContent = PRIMARY_LABEL;
 
-fetch("/api/targets", { cache: "no-store" }).then(async (r) => {
-  if (!r.ok) throw 0;
-  const j = await r.json();
-  const avail = new Map((j.targets || []).map((t) => [
-    t.product + "/" + t.os + "/" + t.arch + "/" + t.kind, !!t.available,
-  ]));
-  if (!avail.size) return;
-  document.querySelectorAll(".dl-item[data-target]").forEach((el) => {
-    if (avail.get(el.getAttribute("data-target")) === false) {
-      el.style.display = "none";
-    }
-  });
-  const pick = FALLBACK_ORDER.find((k) => avail.get(k));
-  if (pick) {
-    dl.href = "/latest/" + pick;
-    if (pick !== PRIMARY) dl.textContent = "DOWNLOAD — " + pick.split("/").pop();
-  }
-}).catch(() => {});
+            fetch("/api/targets", { cache: "no-store" })
+                .then(async (r) => {
+                    if (!r.ok) throw 0;
+                    const j = await r.json();
+                    const avail = new Map(
+                        (j.targets || []).map((t) => [
+                            t.product +
+                                "/" +
+                                t.os +
+                                "/" +
+                                t.arch +
+                                "/" +
+                                t.kind,
+                            !!t.available,
+                        ]),
+                    );
+                    if (!avail.size) return;
+                    document
+                        .querySelectorAll(".dl-item[data-target]")
+                        .forEach((el) => {
+                            if (
+                                avail.get(el.getAttribute("data-target")) ===
+                                false
+                            ) {
+                                el.style.display = "none";
+                            }
+                        });
+                    const pick = FALLBACK_ORDER.find((k) => avail.get(k));
+                    if (pick) {
+                        dl.href = "/latest/" + pick;
+                        if (pick !== PRIMARY)
+                            dl.textContent =
+                                "DOWNLOAD — " + pick.split("/").pop();
+                    }
+                })
+                .catch(() => {});
 
-function rel(ts) {
-  const s = Math.max(1, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
-  if (s < 60) return s + "s ago";
-  const m = Math.floor(s / 60); if (m < 60) return m + "m ago";
-  const h = Math.floor(m / 60); if (h < 24) return h + "h ago";
-  return Math.floor(h / 24) + "d ago";
-}
-fetch("/api/latest", { cache: "no-store" }).then(async (r) => {
-  if (!r.ok) throw 0;
-  const j = await r.json();
-  const t = j.newest_built_at || j.linux?.built_at || j.windows?.built_at || j.macos?.built_at;
-  const branch = j.linux?.branch || j.windows?.branch || j.macos?.branch || "latest";
-  const ver = j.version ? "v" + j.version + " · " : "";
-  const label = ver + branch + (t ? " · built " + rel(t) : "");
-  $("status").textContent = label;
-  const sha = j.linux?.sha || j.windows?.sha || j.macos?.sha;
-  $("meta").innerHTML = "";
-  const b = document.createElement("b");
-  b.textContent = ver + branch;
-  $("meta").appendChild(b);
-  if (t) $("meta").appendChild(document.createTextNode(" · built " + rel(t)));
-  if (sha) {
-    $("meta").appendChild(document.createElement("br"));
-    const c = document.createElement("code");
-    c.textContent = sha;
-    $("meta").appendChild(c);
-  }
-}).catch(() => {
-  $("status").textContent = "Status unavailable";
-  $("meta").textContent = "Status unavailable";
-});
-</script>
-</body>
+            function rel(ts) {
+                const s = Math.max(
+                    1,
+                    Math.floor((Date.now() - new Date(ts).getTime()) / 1000),
+                );
+                if (s < 60) return s + "s ago";
+                const m = Math.floor(s / 60);
+                if (m < 60) return m + "m ago";
+                const h = Math.floor(m / 60);
+                if (h < 24) return h + "h ago";
+                return Math.floor(h / 24) + "d ago";
+            }
+            fetch("/api/latest", { cache: "no-store" })
+                .then(async (r) => {
+                    if (!r.ok) throw 0;
+                    const j = await r.json();
+                    const t =
+                        j.newest_built_at ||
+                        j.linux?.built_at ||
+                        j.windows?.built_at ||
+                        j.macos?.built_at;
+                    const branch =
+                        j.linux?.branch ||
+                        j.windows?.branch ||
+                        j.macos?.branch ||
+                        "latest";
+                    const ver = j.version ? "v" + j.version + " · " : "";
+                    const label =
+                        ver + branch + (t ? " · built " + rel(t) : "");
+                    $("status").textContent = label;
+                    const sha = j.linux?.sha || j.windows?.sha || j.macos?.sha;
+                    $("meta").innerHTML = "";
+                    const b = document.createElement("b");
+                    b.textContent = ver + branch;
+                    $("meta").appendChild(b);
+                    if (t)
+                        $("meta").appendChild(
+                            document.createTextNode(" · built " + rel(t)),
+                        );
+                    if (sha) {
+                        $("meta").appendChild(document.createElement("br"));
+                        const c = document.createElement("code");
+                        c.textContent = sha;
+                        $("meta").appendChild(c);
+                    }
+                })
+                .catch(() => {
+                    $("status").textContent = "Status unavailable";
+                    $("meta").textContent = "Status unavailable";
+                });
+        </script>
+    </body>
 </html>
