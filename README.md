@@ -39,6 +39,7 @@ Other routes:
 
 ```text
 GET  /                    landing page
+GET  /install             install instructions (repos, AppImage, CLI)
 GET  /pubkey              package-signing public key (application/pgp-keys)
 GET  /dists/stable/...    APT repo (InRelease, Release[.gpg], Packages[.gz])
 GET  /pool/main/*.deb     APT pool (conventional filename, immutable)

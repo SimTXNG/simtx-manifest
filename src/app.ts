@@ -366,6 +366,23 @@ export function createApp(opts: AppOptions) {
     });
   }
 
+  async function serveInstall(): Promise<Response> {
+    let raw: Uint8Array;
+    try {
+      raw = await Deno.readFile(
+        new URL("./static/install.html", import.meta.url),
+      );
+    } catch {
+      throw new HttpError(404, "install.html not found");
+    }
+    return new Response(raw as unknown as BodyInit, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "Cache-Control": "no-cache",
+      },
+    });
+  }
+
   async function findRun(workflow: string, ref: string): Promise<Run | null> {
     const wf = encodeURIComponent(workflow);
     const branch = ref === "latest" ? LATEST_REF : ref;
@@ -1070,6 +1087,7 @@ export function createApp(opts: AppOptions) {
     })
     .get("/", () => serveIndex())
     .get("/index.html", () => serveIndex())
+    .get("/install", () => serveInstall())
     .get("/api/latest", async () => json(await latestStatus()))
     .get("/api/status", async () => json(await latestStatus()))
     .get("/api/targets", () => handleTargets("latest"))
@@ -1125,6 +1143,10 @@ export function createApp(opts: AppOptions) {
         headers: { "content-type": "text/html; charset=utf-8" },
       }))
     .head("/index.html", () =>
+      new Response(null, {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }))
+    .head("/install", () =>
       new Response(null, {
         headers: { "content-type": "text/html; charset=utf-8" },
       }))

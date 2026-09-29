@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SimTX — Install</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #05080c;
+    --panel: #0a0e14;
+    --edge: #2c3842;
+    --cyan: #35b6c9;
+    --amber: #ffb000;
+    --text: #ebf0f2;
+    --grey: #949ea4;
+    --dim: #5a646e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; min-width: 320px;
+    background: var(--bg); color: var(--text);
+    font-family: DejaVu Sans Mono, JetBrains Mono, Consolas, Menlo, monospace;
+    font-size: 15px; line-height: 1.65;
+  }
+  a { color: var(--cyan); }
+  a:hover { color: var(--text); }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  .site-shell { background: var(--bg); min-height: 100vh; color: var(--text); }
+  .site-nav {
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+    min-height: 54px; padding: 0 24px;
+    border-bottom: 1px solid var(--edge); background: var(--bg);
+  }
+  .site-nav a { text-decoration: none; }
+  .nav-brand { color: var(--text); font-weight: 700; }
+  .nav-links { display: flex; align-items: center; gap: 22px; }
+  .nav-links a { color: var(--grey); font-size: .9em; }
+  .nav-links a:hover { color: var(--cyan); }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 20px 20px; }
+  main > h1 { margin: 0 0 8px; font-size: 1.6em; letter-spacing: -.02em; }
+  main > p { color: var(--grey); }
+  .panel {
+    position: relative; border: 1px solid var(--edge);
+    margin: 34px 0; padding: 26px 26px 18px; background: var(--panel);
+  }
+  .panel > h2 {
+    position: absolute; top: 0; left: 16px; transform: translateY(-50%);
+    margin: 0; padding: 0 10px; background: var(--bg);
+    color: var(--cyan); font-size: 1.05em; font-weight: 700;
+  }
+  .panel p, .panel li { color: var(--grey); }
+  .panel strong { color: var(--text); }
+  .panel code { color: var(--grey); overflow-wrap: anywhere; }
+  pre.cmd {
+    border: 1px solid var(--edge); background: #020406; color: var(--grey);
+    padding: 12px 14px; font-size: .82em; overflow-x: auto; margin: 10px 0 16px;
+  }
+  .site-footer {
+    text-align: center; color: var(--grey); font-size: .85em;
+    border-top: 1px solid var(--edge); padding: 25px 20px;
+  }
+  .site-footer a { color: var(--grey); }
+  @media (max-width: 620px) {
+    .site-nav { align-items: flex-start; padding: 14px 16px; }
+    .nav-links { flex-wrap: wrap; justify-content: flex-end; gap: 8px 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="site-shell">
+  <nav class="site-nav">
+    <a class="nav-brand" href="/">SimTX</a>
+    <div class="nav-links">
+      <a href="/install">Install</a>
+      <a href="/pubkey">Signing key</a>
+      <a href="/api/latest">API</a>
+    </div>
+  </nav>
+  <main>
+    <h1>Installing SimTX</h1>
+    <p>All packages are served by manifest.simtx.net and signed with the
+    SimTX package-signing key (<code>SimTX Package Signing
+    &lt;packages@simtx.net&gt;</code>, fingerprint
+    <code>18DDFED1FFF7FE5B0BFB20EDBF9413DA974E8B09</code>).
+    Always verify the fingerprint when trusting the key. If it does not
+    match, stop and ask — do not install.</p>
+
+    <section class="panel" id="debian">
+      <h2>Ubuntu / Debian (24.04+, Debian 13+)</h2>
+<pre class="cmd"># 1. Trust the key
+curl -fsSL https://manifest.simtx.net/pubkey | sudo gpg --dearmor -o /usr/share/keyrings/simtx-archive-keyring.gpg
+gpg --show-keys /usr/share/keyrings/simtx-archive-keyring.gpg  # check the fingerprint above
+
+# 2. Add the repo
+sudo tee /etc/apt/sources.list.d/simtx.sources &gt; /dev/null &lt;&lt;'EOF'
+Types: deb
+URIs: https://manifest.simtx.net
+Suites: stable
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/simtx-archive-keyring.gpg
+EOF
+
+# 3. Install / update
+sudo apt-get update
+sudo apt-get install simtx</pre>
+      <p>Verify: <code>dpkg -s simtx | grep -E '^(Version|Status)'</code> and
+      <code>simtx-cli version</code>.</p>
+    </section>
+
+    <section class="panel" id="arch">
+      <h2>Arch Linux</h2>
+<pre class="cmd"># 1. Trust the key
+curl -fsSL -O https://manifest.simtx.net/pubkey
+mv pubkey simtx-signing-pubkey.asc
+sudo pacman-key --add simtx-signing-pubkey.asc
+sudo pacman-key --lsign-key 18DDFED1FFF7FE5B0BFB20EDBF9413DA974E8B09
+
+# 2. Add the repo (above [core] in /etc/pacman.conf for priority)
+printf '[simtx]\nServer = https://manifest.simtx.net/arch/$arch\nSigLevel = PackageRequired DatabaseOptional\n' | sudo tee -a /etc/pacman.conf &gt; /dev/null
+
+# 3. Install / update
+sudo pacman -Sy simtx</pre>
+      <p>Direct-URL install works too (pacman fetches the <code>.sig</code> itself):</p>
+<pre class="cmd">sudo pacman -U https://manifest.simtx.net/latest/app/linux/amd64/pkg.zst</pre>
+      <p>Verify: <code>pacman -Q simtx</code> and <code>simtx-cli version</code>.</p>
+    </section>
+
+    <section class="panel" id="fedora">
+      <h2>Fedora</h2>
+<pre class="cmd"># /etc/yum.repos.d/simtx.repo
+[simtx]
+name=simtx ($basearch)
+baseurl=https://manifest.simtx.net/rpmrepo/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://manifest.simtx.net/pubkey</pre>
+<pre class="cmd">sudo dnf install simtx</pre>
+      <p>Verify: <code>rpm -q simtx</code> and <code>simtx-cli version</code>.</p>
+    </section>
+
+    <section class="panel" id="appimage">
+      <h2>AppImage (any distro)</h2>
+<pre class="cmd">curl -fsSL -O https://manifest.simtx.net/latest/app/linux/amd64/appimage
+chmod +x simtx-*.AppImage
+./simtx-*.AppImage</pre>
+      <p>Check integrity first (hash published next to the image):</p>
+<pre class="cmd">curl -fsSL https://manifest.simtx.net/latest/app/linux/amd64/appimage-sha256
+sha256sum simtx-*.AppImage</pre>
+      <p>Installed AppImages self-update via the embedded channel
+      (<code>appimageupdatetool</code>).</p>
+    </section>
+
+    <section class="panel" id="cli">
+      <h2>Headless CLI only</h2>
+      <p>The <code>simtx-cli</code> binary ships inside every Linux package
+      (<code>/usr/bin/simtx-cli</code>) and bundled in the AppImage.
+      Standalone download:</p>
+<pre class="cmd">curl -fsSL -O https://manifest.simtx.net/latest/cli/linux/amd64/binary
+chmod +x simtx-cli
+./simtx-cli version</pre>
+    </section>
+
+    <section class="panel" id="trouble">
+      <h2>Troubleshooting</h2>
+      <ul>
+        <li><code>apt-get update</code>: signature errors → re-check step 1 (keyring path
+        in <code>.sources</code> must match where you wrote the <code>.gpg</code> file).</li>
+        <li>Arch <code>SigLevel</code> errors → re-run the <code>pacman-key</code> steps; the key must
+        show as locally signed (<code>pacman-key --list-sigs packages@simtx.net</code>).</li>
+        <li>Fedora <code>repomd.xml GPG signature verification error</code> on first run →
+        answer <code>y</code> to the key-import prompt (or pre-import with
+        <code>rpm --import</code>), then retry.</li>
+        <li>Old Ubuntu (22.04) / Debian 12: unsupported — the GTK4 + WebKitGTK
+        6.0 stack needs Ubuntu 24.04+ / Debian 13+.</li>
+      </ul>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <a href="/">SimTX downloads</a> · <a href="/pubkey">signing key</a>
+  </footer>
+</div>
+</body>
+</html>

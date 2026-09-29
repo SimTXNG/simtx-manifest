@@ -13,8 +13,7 @@ async function withTempDir(fn: (dir: string) => Promise<void>) {
   }
 }
 
-Deno.test("routes: landing page GET + HEAD", async () => {
-  await withTempDir(async (dir) => {
+Deno.test("routes: landing page GET + HEAD", async () => {  await withTempDir(async (dir) => {
     const ctx = testCtx(dir);
     const get = await ctx.app.handle(req("/"));
     assertEquals(get.status, 200);
@@ -25,6 +24,24 @@ Deno.test("routes: landing page GET + HEAD", async () => {
     assertEquals(index.status, 200);
 
     const head = await ctx.app.handle(req("/", { method: "HEAD" }));
+    assertEquals(head.status, 200);
+    assertStringIncludes(head.headers.get("content-type")!, "text/html");
+    assertEquals(await head.text(), "");
+  });
+});
+
+Deno.test("routes: install page GET + HEAD", async () => {
+  await withTempDir(async (dir) => {
+    const ctx = testCtx(dir);
+    const get = await ctx.app.handle(req("/install"));
+    assertEquals(get.status, 200);
+    assertStringIncludes(get.headers.get("content-type")!, "text/html");
+    const body = await get.text();
+    assertStringIncludes(body, "Installing SimTX");
+    assertStringIncludes(body, "manifest.simtx.net/pubkey");
+    assertStringIncludes(body, "manifest.simtx.net/rpmrepo/");
+
+    const head = await ctx.app.handle(req("/install", { method: "HEAD" }));
     assertEquals(head.status, 200);
     assertStringIncludes(head.headers.get("content-type")!, "text/html");
     assertEquals(await head.text(), "");
