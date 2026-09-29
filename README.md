@@ -26,7 +26,7 @@ Canonical shape, five segments:
 /v1.2.3/cli/windows/amd64/binary
 ```
 
-Kinds per platform: `deb`, `rpm`, `pkg.zst`, `appimage`, `appimage-zsync`, `appimage-sha256` on Linux; `exe` on Windows; `dmg` on macOS (Apple Silicon only). The CLI ships as `binary`. Aliases work too: `x86_64` for `amd64`, `aarch64` for `arm64`, `pkg.tar.zst` and `arch` for `pkg.zst`.
+Kinds per platform: `deb`, `rpm`, `pkg.zst`, `pkg.zst.sig`, `appimage`, `appimage-zsync`, `appimage-sha256` on Linux; `exe` on Windows; `dmg` on macOS (Apple Silicon only). The CLI ships as `binary`. Aliases work too: `x86_64` for `amd64`, `aarch64` for `arm64`, `pkg.tar.zst` and `arch` for `pkg.zst`.
 
 A legacy four-segment form still works for the desktop app:
 
@@ -39,6 +39,11 @@ Other routes:
 
 ```text
 GET  /                    landing page
+GET  /pubkey              package-signing public key (application/pgp-keys)
+GET  /dists/stable/...    APT repo (InRelease, Release[.gpg], Packages[.gz])
+GET  /pool/main/*.deb     APT pool (conventional filename, immutable)
+GET  /arch/x86_64/...     Arch repo (simtx.db[.tar.gz][.sig], simtx.files...)
+GET  /rpmrepo/...         Fedora repo (repodata/, pool rpm)
 GET  /api/latest          newest build per platform, as JSON
 GET  /api/targets[/ref]   which downloads exist for a ref, as JSON
 GET  /healthz             liveness probe, answers ok

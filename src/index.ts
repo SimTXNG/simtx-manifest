@@ -26,12 +26,34 @@ const parsed = EnvSchema.safeParse({
   MACOS_WORKFLOW: env("MACOS_WORKFLOW"),
   LATEST_REF: env("LATEST_REF"),
   VERSION_RETURN: env("VERSION_RETURN"),
+  SIGNING_KEY_FILE: env("SIGNING_KEY_FILE"),
 });
 if (!parsed.success) {
   console.error("Invalid configuration:\n" + z.prettifyError(parsed.error));
   Deno.exit(1);
 }
 const cfg = parsed.data;
+
+// Repo metadata signing: SIGNING_KEY_FILE points at a file holding the
+// armored private key (chmod 600, never committed). Absent → repo
+// metadata routes answer 503; packages still serve.
+let signingKey: string | undefined;
+if (cfg.SIGNING_KEY_FILE) {
+  try {
+    signingKey = (await Deno.readTextFile(cfg.SIGNING_KEY_FILE)).trim() || undefined;
+  } catch (e) {
+    console.error(`Cannot read SIGNING_KEY_FILE: ${(e as Error).message}`);
+    Deno.exit(1);
+  }
+  const { loadSigningKey } = await import("./repo-sign.ts");
+  try {
+    await loadSigningKey(signingKey!);
+    console.log("repo signing key OK");
+  } catch (e) {
+    console.error(`Invalid signing key: ${(e as Error).message}`);
+    Deno.exit(1);
+  }
+}
 
 const REPO = cfg.GITHUB_REPO;
 const HOST = cfg.HOST;
@@ -55,6 +77,7 @@ const ctx = createApp({
   cacheMaxRuns: cfg.CACHE_MAX_RUNS,
   latestRef: cfg.LATEST_REF,
   versionReturn: cfg.VERSION_RETURN?.trim() || undefined,
+  signingKey,
 });
 
 await Deno.mkdir(CACHE_DIR, { recursive: true });

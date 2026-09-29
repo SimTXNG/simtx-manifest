@@ -295,8 +295,7 @@ Deno.test("routes: api/updates/latest shape + version-unset 503", async () => {
   });
 });
 
-Deno.test("routes: zsync missing from old artifact -> 404", async () => {
-  await withTempDir(async (dir) => {
+Deno.test("routes: zsync missing from old artifact -> 404", async () => {  await withTempDir(async (dir) => {
     const runId = 779;
     await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
     await Deno.writeFile(
@@ -309,6 +308,45 @@ Deno.test("routes: zsync missing from old artifact -> 404", async () => {
     assertEquals(
       (await ctx.app.handle(req("/v9/app/linux/amd64/appimage-zsync"))).status,
       404,
+    );
+  });
+});
+
+Deno.test("routes: pubkey serves the signing key", async () => {
+  await withTempDir(async (dir) => {
+    const ctx = testCtx(dir);
+    const get = await ctx.app.handle(req("/pubkey"));
+    assertEquals(get.status, 200);
+    assertStringIncludes(get.headers.get("content-type")!, "application/pgp-keys");
+    assertStringIncludes(await get.text(), "BEGIN PGP PUBLIC KEY BLOCK");
+    const head = await ctx.app.handle(req("/pubkey", { method: "HEAD" }));
+    assertEquals(head.status, 200);
+    assertEquals(await head.text(), "");
+  });
+});
+
+Deno.test("routes: arch pkg detached signature downloads as pkg.zst.sig", async () => {
+  await withTempDir(async (dir) => {
+    const runId = 780;
+    await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
+    const enc = new TextEncoder();
+    await Deno.writeFile(
+      `${dir}/${runId}/simtx-0.1.0alpha5-1-x86_64.pkg.tar.zst`,
+      enc.encode("pkg"),
+    );
+    await Deno.writeFile(
+      `${dir}/${runId}/simtx-0.1.0alpha5-1-x86_64.pkg.tar.zst.sig`,
+      enc.encode("sig"),
+    );
+    const ctx = testCtx(dir, {
+      fetchImpl: () => Promise.resolve(runsResponse([makeRun({ id: runId })])),
+    });
+    const res = await ctx.app.handle(req("/v9/app/linux/amd64/pkg.zst.sig"));
+    assertEquals(res.status, 200);
+    assertEquals(await res.text(), "sig");
+    assertStringIncludes(
+      res.headers.get("content-disposition")!,
+      "simtx-0.1.0alpha5-1-x86_64.pkg.tar.zst.sig",
     );
   });
 });

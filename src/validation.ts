@@ -55,7 +55,7 @@ export function canonicalKind(
 ): string | null {
   const k = aliasKind(kind);
   if (product === "app" && os === "linux") {
-    return ["deb", "appimage", "appimage-zsync", "appimage-sha256", "rpm", "pkg.zst"].includes(k) ? k : null;
+    return ["deb", "appimage", "appimage-zsync", "appimage-sha256", "rpm", "pkg.zst", "pkg.zst.sig"].includes(k) ? k : null;
   }
   if (product === "app" && os === "windows") {
     return k === "exe" ? k : null;
@@ -128,6 +128,7 @@ export const EnvSchema = z.object({
   MACOS_WORKFLOW: z.string().min(1).default("build-macos.yml"),
   LATEST_REF: z.string().optional(),
   VERSION_RETURN: z.string().optional(),
+  SIGNING_KEY_FILE: z.string().optional(),
 });
 export type Env = z.infer<typeof EnvSchema>;
 
@@ -146,6 +147,7 @@ export const AppOptionsSchema = z.object({
   cacheMaxRuns: z.number().int().nonnegative(),
   latestRef: z.string().optional(),
   versionReturn: z.string().optional(),
+  signingKey: z.string().optional(),
 });
 export type AppOptions = z.infer<typeof AppOptionsSchema>;
 

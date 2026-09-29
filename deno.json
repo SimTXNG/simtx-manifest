@@ -9,6 +9,8 @@
     "@std/dotenv": "jsr:@std/dotenv@^0.225.8",
     "elysia": "npm:elysia@^1.4.30",
     "fflate": "npm:fflate@0.8.2",
+    "fzstd": "npm:fzstd@0.1.1",
+    "openpgp": "npm:openpgp@5.11.3",
     "zod": "npm:zod@^4.6.5"
   }
 }
