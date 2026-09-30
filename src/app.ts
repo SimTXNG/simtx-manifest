@@ -1,10 +1,7 @@
 import { Elysia } from "elysia";
 import type { z } from "zod";
 import { unzipSync } from "fflate";
-import {
-  archPackageForBytes,
-  buildArchDb,
-} from "./repo-arch.ts";
+import { archPackageForBytes, buildArchDb } from "./repo-arch.ts";
 import {
   buildFilelistsXml,
   buildOtherXml,
@@ -80,13 +77,18 @@ export function matchesTarget(
     if (kind === "deb") return n.endsWith(".deb");
     if (kind === "pkg.zst.sig") return n.endsWith(".pkg.tar.zst.sig");
     if (kind === "appimage") {
-      return n.endsWith(".appimage") && !n.endsWith(".appimage.zsync") &&
-        !n.endsWith(".appimage.sha256");
+      return (
+        n.endsWith(".appimage") &&
+        !n.endsWith(".appimage.zsync") &&
+        !n.endsWith(".appimage.sha256")
+      );
     }
     if (kind === "appimage-zsync") return n.endsWith(".appimage.zsync");
     if (kind === "appimage-sha256") {
-      return n.endsWith(".appimage.sha256") ||
-        (n.endsWith(".sha256") && n.includes(".appimage"));
+      return (
+        n.endsWith(".appimage.sha256") ||
+        (n.endsWith(".sha256") && n.includes(".appimage"))
+      );
     }
     if (kind === "rpm") return n.endsWith(".rpm");
     if (kind === "pkg.zst" || kind === "pkg.tar.zst" || kind === "arch") {
@@ -156,9 +158,11 @@ export function collect(
   const entries = unzipSync(zip, {
     filter: (f) => {
       const n = f.name.toLowerCase();
-      return n.endsWith(".zip") ||
+      return (
+        n.endsWith(".zip") ||
         WANTED_EXTS.some((e) => n.endsWith(e)) ||
-        isCliUnix(n.split("/").pop() ?? "");
+        isCliUnix(n.split("/").pop() ?? "")
+      );
     },
   });
   for (const [path, data] of Object.entries(entries)) {
@@ -198,8 +202,8 @@ export function createApp(opts: AppOptions) {
   const CACHE_MAX_RUNS = cfg.cacheMaxRuns;
   const LATEST_REF = cfg.latestRef;
   const VERSION_RETURN = cfg.versionReturn?.trim() || undefined;
-  const INDEX_URL = opts.indexFileUrl ??
-    new URL("./static/index.html", import.meta.url);
+  const INDEX_URL =
+    opts.indexFileUrl ?? new URL("./static/index.html", import.meta.url);
 
   let fetchFn: typeof fetch = opts.fetchImpl ?? fetch;
   const runCache = new Map<string, { run: Run | null; expires: number }>();
@@ -223,10 +227,7 @@ export function createApp(opts: AppOptions) {
     const res = await gh(path);
     if (!res.ok) {
       await res.body?.cancel();
-      throw new HttpError(
-        502,
-        `GitHub API returned ${res.status} for ${path}`,
-      );
+      throw new HttpError(502, `GitHub API returned ${res.status} for ${path}`);
     }
     const parsed = schema.safeParse(await res.json());
     if (!parsed.success) {
@@ -264,7 +265,10 @@ export function createApp(opts: AppOptions) {
   async function buildTargets(ref: string) {
     const oss = Object.keys(WORKFLOWS) as Os[];
     const runs = await Promise.all(
-      oss.map(async (os) => ({ os, run: await resolveRun(WORKFLOWS[os], ref) })),
+      oss.map(async (os) => ({
+        os,
+        run: await resolveRun(WORKFLOWS[os], ref),
+      })),
     );
     const targets = await Promise.all(
       TARGET_DEFS.map(async (t) => {
@@ -345,8 +349,7 @@ export function createApp(opts: AppOptions) {
       headers: {
         "content-type": "application/pgp-keys",
         "Content-Length": String(bytes.length),
-        "Content-Disposition":
-          `attachment; filename="simtx-signing-pubkey.asc"`,
+        "Content-Disposition": `attachment; filename="simtx-signing-pubkey.asc"`,
         "Cache-Control": "public, max-age=31536000, immutable",
       },
     });
@@ -435,7 +438,9 @@ export function createApp(opts: AppOptions) {
 
   async function extract(runId: number): Promise<string> {
     const dir = `${CACHE_DIR}/${runId}`;
-    const cached = await Deno.stat(dir).then(() => true).catch(() => false);
+    const cached = await Deno.stat(dir)
+      .then(() => true)
+      .catch(() => false);
     if (cached) return dir;
 
     const { artifacts } = await ghJson(
@@ -493,12 +498,13 @@ export function createApp(opts: AppOptions) {
   }
 
   async function pruneCache(): Promise<void> {
-    if (CACHE_MAX_RUNS <= 0) return;    const entries: { name: string; mtime: number }[] = [];
+    if (CACHE_MAX_RUNS <= 0) return;
+    const entries: { name: string; mtime: number }[] = [];
     for await (const entry of Deno.readDir(CACHE_DIR)) {
       if (!entry.isDirectory || entry.name.endsWith(".partial")) continue;
       if (!/^\d+$/.test(entry.name)) continue;
-      const mtime = (await Deno.stat(`${CACHE_DIR}/${entry.name}`)).mtime
-        ?.getTime() ?? 0;
+      const mtime =
+        (await Deno.stat(`${CACHE_DIR}/${entry.name}`)).mtime?.getTime() ?? 0;
       entries.push({ name: entry.name, mtime });
     }
     entries.sort((a, b) => b.mtime - a.mtime);
@@ -527,9 +533,13 @@ export function createApp(opts: AppOptions) {
       start = Number(m[1]);
       end = m[2] === "" ? size - 1 : Number(m[2]);
       if (
-        !Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
-        start >= size || end >= size || start > end
-      ) return "invalid";
+        !Number.isSafeInteger(start) ||
+        !Number.isSafeInteger(end) ||
+        start >= size ||
+        end >= size ||
+        start > end
+      )
+        return "invalid";
     }
     return { start, end };
   }
@@ -546,12 +556,19 @@ export function createApp(opts: AppOptions) {
       if (entry.isFile) names.push(entry.name);
     }
     names.sort((a, b) => a.localeCompare(b));
-    const appimage = names.find((n) => matchesTarget("app", "linux", "appimage", n)) ?? null;
-    const zsync = names.find((n) => matchesTarget("app", "linux", "appimage-zsync", n)) ?? null;
-    const shaFile = names.find((n) => matchesTarget("app", "linux", "appimage-sha256", n)) ?? null;
+    const appimage =
+      names.find((n) => matchesTarget("app", "linux", "appimage", n)) ?? null;
+    const zsync =
+      names.find((n) => matchesTarget("app", "linux", "appimage-zsync", n)) ??
+      null;
+    const shaFile =
+      names.find((n) => matchesTarget("app", "linux", "appimage-sha256", n)) ??
+      null;
     let sha256: string | null = null;
     if (shaFile) {
-      const raw = (await Deno.readTextFile(`${dir}/${shaFile}`)).trim().split(/\s+/)[0] ?? "";
+      const raw =
+        (await Deno.readTextFile(`${dir}/${shaFile}`)).trim().split(/\s+/)[0] ??
+        "";
       sha256 = /^[0-9a-fA-F]{64}$/.test(raw) ? raw.toLowerCase() : null;
     }
     const ref = run.head_branch;
@@ -579,24 +596,18 @@ export function createApp(opts: AppOptions) {
     isHead: boolean,
     rangeHeader: string | null = null,
   ): Promise<Response> {
-    const { ref, product, os, kind } = parseOr422(
-      DownloadParamsSchema,
-      {
-        ref: refRaw,
-        product: productRaw,
-        os: osRaw,
-        arch: archRaw,
-        kind: kindRaw,
-      },
-    );
+    const { ref, product, os, kind } = parseOr422(DownloadParamsSchema, {
+      ref: refRaw,
+      product: productRaw,
+      os: osRaw,
+      arch: archRaw,
+      kind: kindRaw,
+    });
     const workflow = WORKFLOWS[os];
 
     const run = await resolveRun(workflow, ref);
     if (!run) {
-      throw new HttpError(
-        404,
-        `No successful ${os} build found for "${ref}"`,
-      );
+      throw new HttpError(404, `No successful ${os} build found for "${ref}"`);
     }
 
     const dir = await ensureExtracted(run.id);
@@ -605,9 +616,7 @@ export function createApp(opts: AppOptions) {
       if (entry.isFile) names.push(entry.name);
     }
     names.sort((a, b) => a.localeCompare(b));
-    const file = names.find((n) =>
-      matchesTarget(product, os, kind, n)
-    );
+    const file = names.find((n) => matchesTarget(product, os, kind, n));
     if (!file) {
       throw new HttpError(
         404,
@@ -617,9 +626,8 @@ export function createApp(opts: AppOptions) {
 
     const path = `${dir}/${file}`;
     const { size } = await Deno.stat(path);
-    const cacheControl = ref === "latest"
-      ? "no-cache"
-      : "public, max-age=31536000, immutable";
+    const cacheControl =
+      ref === "latest" ? "no-cache" : "public, max-age=31536000, immutable";
     const baseHeaders = {
       "Content-Type": "application/octet-stream",
       "Content-Disposition": `attachment; filename="${file}"`,
@@ -645,7 +653,10 @@ export function createApp(opts: AppOptions) {
     }
     if (range) {
       const len = range.end - range.start + 1;
-      const data = (await Deno.readFile(path)).slice(range.start, range.end + 1);
+      const data = (await Deno.readFile(path)).slice(
+        range.start,
+        range.end + 1,
+      );
       return new Response(data, {
         status: 206,
         headers: {
@@ -683,8 +694,12 @@ export function createApp(opts: AppOptions) {
   }
   let rpmCache: { key: string; repo: RpmRepo } | null = null;
 
-  const rpmFileName = (info: { name: string; version: string; release: string; arch: string }) =>
-    `${info.name}-${info.version}-${info.release}.${info.arch}.rpm`;
+  const rpmFileName = (info: {
+    name: string;
+    version: string;
+    release: string;
+    arch: string;
+  }) => `${info.name}-${info.version}-${info.release}.${info.arch}.rpm`;
 
   async function rpmRepo(): Promise<RpmRepo> {
     // Signing first: unsigned servers answer 503 even with no builds.
@@ -694,7 +709,10 @@ export function createApp(opts: AppOptions) {
     if (rpmCache && rpmCache.key === key) return rpmCache.repo;
     const info = parseRpm(pkg.data);
     if (!info.name || !info.version || !info.release || !info.arch) {
-      throw new HttpError(502, "rpm repo: header missing name/version/release/arch");
+      throw new HttpError(
+        502,
+        "rpm repo: header missing name/version/release/arch",
+      );
     }
     const rpmName = rpmFileName(info);
     const checksum = await sha256Hex(pkg.data);
@@ -702,14 +720,16 @@ export function createApp(opts: AppOptions) {
     const now = Math.floor(Date.now() / 1000);
     const location = rpmName;
     const primaryRaw = enc.encode(
-      buildPrimaryXml([{
-        info,
-        checksum,
-        location,
-        size: pkg.data.length,
-        buildTime: info.buildtime || String(now),
-        fileTime: String(now),
-      }]),
+      buildPrimaryXml([
+        {
+          info,
+          checksum,
+          location,
+          size: pkg.data.length,
+          buildTime: info.buildtime || String(now),
+          fileTime: String(now),
+        },
+      ]),
     );
     const filelistsRaw = enc.encode(buildFilelistsXml([{ info, checksum }]));
     const otherRaw = enc.encode(buildOtherXml([{ info, checksum }]));
@@ -741,7 +761,10 @@ export function createApp(opts: AppOptions) {
     return repo;
   }
 
-  async function serveRpmRepo(file: string, isHead: boolean): Promise<Response> {
+  async function serveRpmRepo(
+    file: string,
+    isHead: boolean,
+  ): Promise<Response> {
     const repo = await rpmRepo();
     let body: Uint8Array | string;
     let name: string;
@@ -766,7 +789,8 @@ export function createApp(opts: AppOptions) {
     } else {
       throw new HttpError(404, "unknown repodata file");
     }
-    const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+    const bytes =
+      typeof body === "string" ? new TextEncoder().encode(body) : body;
     if (isHead) {
       return new Response(null, {
         headers: {
@@ -786,7 +810,10 @@ export function createApp(opts: AppOptions) {
     });
   }
 
-  async function serveRpmPool(filename: string, isHead: boolean): Promise<Response> {
+  async function serveRpmPool(
+    filename: string,
+    isHead: boolean,
+  ): Promise<Response> {
     // Signing first: unsigned servers answer 503 even with no builds.
     await signKey();
     if (!/^[\w][\w.+~:-]*\.rpm$/.test(filename)) {
@@ -813,21 +840,33 @@ export function createApp(opts: AppOptions) {
 
   const SIGNING_KEY = cfg.signingKey?.trim() || undefined;
   const SIGNING_FPR = opts.signingKeyFpr;
-  let signKeyP: Promise<Awaited<ReturnType<typeof loadSigningKey>>> | null = null;
+  let signKeyP: Promise<Awaited<ReturnType<typeof loadSigningKey>>> | null =
+    null;
   function signKey() {
     if (!SIGNING_KEY) {
-      throw new HttpError(503, "repository signing is not configured (SIGNING_KEY_FILE unset)");
+      throw new HttpError(
+        503,
+        "repository signing is not configured (SIGNING_KEY_FILE unset)",
+      );
     }
     if (!signKeyP) {
       signKeyP = loadSigningKey(SIGNING_KEY, SIGNING_FPR).catch((e) => {
         signKeyP = null;
-        throw new HttpError(503, `signing key invalid: ${(e as Error).message}`);
+        throw new HttpError(
+          503,
+          `signing key invalid: ${(e as Error).message}`,
+        );
       });
     }
     return signKeyP;
   }
 
-  async function readRunFile(os: Os, ref: string, product: string, kind: string) {
+  async function readRunFile(
+    os: Os,
+    ref: string,
+    product: string,
+    kind: string,
+  ) {
     const run = await resolveRun(WORKFLOWS[os], ref);
     if (!run) {
       throw new HttpError(404, `No successful ${os} build found for "${ref}"`);
@@ -840,7 +879,10 @@ export function createApp(opts: AppOptions) {
     names.sort((a, b) => a.localeCompare(b));
     const file = names.find((n) => matchesTarget(product, os, kind, n));
     if (!file) {
-      throw new HttpError(404, `No ${kind} (${product}/${os}) in the ${ref} artifact`);
+      throw new HttpError(
+        404,
+        `No ${kind} (${product}/${os}) in the ${ref} artifact`,
+      );
     }
     return { run, file, data: await Deno.readFile(`${dir}/${file}`) };
   }
@@ -850,8 +892,9 @@ export function createApp(opts: AppOptions) {
   // Response bodies as Blob dodge Uint8Array<ArrayBufferLike> typing.
   const u8body = (b: Uint8Array) => new Blob([b as unknown as BlobPart]);
 
-  // -- Arch (/arch/<arch>/simtx.{db,files}[.tar.gz][.sig]) --------------------
-  // Rolling repo over the latest successful linux build.
+  // -- Arch (/arch/<arch>/simtx.{db,files}[.tar.gz][.sig] + *.pkg.tar.zst[.sig]) --
+  // Rolling repo over the latest successful linux build. DB filenames are
+  // metadata; package filenames are the pool (same prefix pacman uses).
 
   interface ArchRepo {
     db: Uint8Array;
@@ -928,7 +971,8 @@ export function createApp(opts: AppOptions) {
       default:
         throw new HttpError(404, "unknown repo database file");
     }
-    const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+    const bytes =
+      typeof body === "string" ? new TextEncoder().encode(body) : body;
     if (isHead) {
       return new Response(null, {
         headers: {
@@ -939,6 +983,59 @@ export function createApp(opts: AppOptions) {
       });
     }
     return archDb(bytes, name);
+  }
+
+  const ARCH_DB_FILES = new Set([
+    "simtx.db",
+    "simtx.db.tar.gz",
+    "simtx.db.tar.gz.sig",
+    "simtx.db.sig",
+    "simtx.files",
+    "simtx.files.tar.gz",
+    "simtx.files.tar.gz.sig",
+    "simtx.files.sig",
+  ]);
+
+  async function serveArchPool(
+    filename: string,
+    isHead: boolean,
+  ): Promise<Response> {
+    if (!/^[\w][\w.+~:-]*\.pkg\.tar\.zst(\.sig)?$/.test(filename)) {
+      throw new HttpError(404, "unknown repo database file");
+    }
+    const wantSig = filename.endsWith(".sig");
+    const pkg = await readRunFile(
+      "linux",
+      "latest",
+      "app",
+      wantSig ? "pkg.zst.sig" : "pkg.zst",
+    );
+    if (filename !== pkg.file) {
+      throw new HttpError(404, `pool has no ${filename}`);
+    }
+    const headers = {
+      "Content-Type": wantSig
+        ? "application/pgp-signature"
+        : "application/octet-stream",
+      "Content-Length": String(pkg.data.length),
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "X-Release-Ref": pkg.run.head_branch,
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "Accept-Ranges": "bytes",
+    };
+    if (isHead) return new Response(null, { headers });
+    return new Response(u8body(pkg.data), { headers });
+  }
+
+  // serveArch dispatches /arch/<arch>/<file>: DB/files metadata (signed,
+  // 503 when unsigned) vs. package pool (always served). Checking the
+  // filename first avoids triggering signKey() for package requests.
+  async function serveArch(file: string, isHead: boolean): Promise<Response> {
+    if (ARCH_DB_FILES.has(file)) return serveArchDb(file, isHead);
+    if (file.endsWith(".pkg.tar.zst") || file.endsWith(".pkg.tar.zst.sig")) {
+      return serveArchPool(file, isHead);
+    }
+    throw new HttpError(404, "unknown repo database file");
   }
 
   // -- APT (dists/stable/...) --------------------------------------------------
@@ -976,8 +1073,14 @@ export function createApp(opts: AppOptions) {
     });
     const packagesGz = await gzipBytes(new TextEncoder().encode(entry));
     const pkgFiles = [
-      { path: `${APT_COMPONENT}/binary-amd64/Packages`, ...(await hashFile(new TextEncoder().encode(entry))) },
-      { path: `${APT_COMPONENT}/binary-amd64/Packages.gz`, ...(await hashFile(packagesGz)) },
+      {
+        path: `${APT_COMPONENT}/binary-amd64/Packages`,
+        ...(await hashFile(new TextEncoder().encode(entry))),
+      },
+      {
+        path: `${APT_COMPONENT}/binary-amd64/Packages.gz`,
+        ...(await hashFile(packagesGz)),
+      },
     ];
     const release = buildRelease(APT_SUITE, ["amd64"], pkgFiles, new Date());
     const releaseBytes = new TextEncoder().encode(release);
@@ -986,7 +1089,13 @@ export function createApp(opts: AppOptions) {
       // Binary mode over exact bytes (strict verifiers reject text-mode).
       detachSign(k, releaseBytes),
     ]);
-    const repo = { packages: entry, packagesGz, release, inRelease, releaseGpg };
+    const repo = {
+      packages: entry,
+      packagesGz,
+      release,
+      inRelease,
+      releaseGpg,
+    };
     aptCache = { key, expires: Date.now() + REPO_TTL_MS, repo };
     return repo;
   }
@@ -1006,7 +1115,8 @@ export function createApp(opts: AppOptions) {
     suite: string,
     file: string,
     isHead: boolean,
-  ): Promise<Response> {    if (suite !== APT_SUITE) throw new HttpError(404, "unknown distribution");
+  ): Promise<Response> {
+    if (suite !== APT_SUITE) throw new HttpError(404, "unknown distribution");
     const repo = await aptRepo();
     let body: Uint8Array | string;
     let name: string;
@@ -1028,7 +1138,8 @@ export function createApp(opts: AppOptions) {
     } else {
       throw new HttpError(404, "unknown repo file");
     }
-    const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+    const bytes =
+      typeof body === "string" ? new TextEncoder().encode(body) : body;
     if (isHead) {
       return new Response(null, {
         headers: {
@@ -1038,7 +1149,11 @@ export function createApp(opts: AppOptions) {
         },
       });
     }
-    if (typeof body === "string" && file !== "InRelease" && file !== "Release.gpg") {
+    if (
+      typeof body === "string" &&
+      file !== "InRelease" &&
+      file !== "Release.gpg"
+    ) {
       return aptText(body);
     }
     return new Response(u8body(bytes), {
@@ -1053,7 +1168,11 @@ export function createApp(opts: AppOptions) {
 
   // servePool serves the .deb under its conventional pool filename.
   // The versioned name is immutable, so long cache headers apply.
-  async function servePool(comp: string, filename: string, isHead: boolean): Promise<Response> {
+  async function servePool(
+    comp: string,
+    filename: string,
+    isHead: boolean,
+  ): Promise<Response> {
     if (comp !== APT_COMPONENT) throw new HttpError(404, "unknown component");
     if (!/^[\w][\w.+~:-]*\.deb$/.test(filename)) {
       throw new HttpError(404, "unknown pool file");
@@ -1097,20 +1216,33 @@ export function createApp(opts: AppOptions) {
     // Repo hosting: registered before the generic download routes so
     // static segments win over :ref params.
     .get("/arch/:arch/:file", ({ params }) => {
-      if (params.arch !== "x86_64") throw new HttpError(422, "arch is x86_64 only");
-      return serveArchDb(params.file, false);
+      if (params.arch !== "x86_64")
+        throw new HttpError(422, "arch is x86_64 only");
+      return serveArch(params.file, false);
     })
-    .get("/dists/:suite/InRelease", ({ params }) => serveAptFile(params.suite, "InRelease", false))
+    .get("/dists/:suite/InRelease", ({ params }) =>
+      serveAptFile(params.suite, "InRelease", false),
+    )
     .get("/dists/:suite/Release", ({ params }) => serveAptRelease(params.suite))
-    .get("/dists/:suite/Release.gpg", ({ params }) => serveAptFile(params.suite, "Release.gpg", false))
+    .get("/dists/:suite/Release.gpg", ({ params }) =>
+      serveAptFile(params.suite, "Release.gpg", false),
+    )
     .get("/dists/:suite/:comp/:archdir/:file", ({ params }) => {
-      if (params.comp !== APT_COMPONENT) throw new HttpError(404, "unknown component");
-      if (params.archdir !== "binary-amd64") throw new HttpError(404, "unknown architecture");
+      if (params.comp !== APT_COMPONENT)
+        throw new HttpError(404, "unknown component");
+      if (params.archdir !== "binary-amd64")
+        throw new HttpError(404, "unknown architecture");
       return serveAptFile(params.suite, params.file, false);
     })
-    .get("/pool/:comp/:filename", ({ params }) => servePool(params.comp, params.filename, false))
-    .get("/rpmrepo/repodata/:file", ({ params }) => serveRpmRepo(params.file, false))
-    .get("/rpmrepo/:filename", ({ params }) => serveRpmPool(params.filename, false))
+    .get("/pool/:comp/:filename", ({ params }) =>
+      servePool(params.comp, params.filename, false),
+    )
+    .get("/rpmrepo/repodata/:file", ({ params }) =>
+      serveRpmRepo(params.file, false),
+    )
+    .get("/rpmrepo/:filename", ({ params }) =>
+      serveRpmPool(params.filename, false),
+    )
     .get("/healthz", () => text("ok"))
     .get("/version", () => {
       if (!VERSION_RETURN) {
@@ -1127,7 +1259,8 @@ export function createApp(opts: AppOptions) {
         params.p3,
         false,
         request.headers.get("range"),
-      ))
+      ),
+    )
     .get("/:ref/:p1/:p2/:p3/:p4", ({ params, request }) =>
       serveDownload(
         params.ref,
@@ -1137,35 +1270,57 @@ export function createApp(opts: AppOptions) {
         params.p4,
         false,
         request.headers.get("range"),
-      ))
-    .head("/", () =>
-      new Response(null, {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      }))
-    .head("/index.html", () =>
-      new Response(null, {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      }))
-    .head("/install", () =>
-      new Response(null, {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      }))
+      ),
+    )
+    .head(
+      "/",
+      () =>
+        new Response(null, {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+    )
+    .head(
+      "/index.html",
+      () =>
+        new Response(null, {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+    )
+    .head(
+      "/install",
+      () =>
+        new Response(null, {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+    )
     .head("/healthz", () => new Response(null, { status: 200 }))
-    .head("/pubkey", () => servePubkey().then((r) => new Response(null, { headers: r.headers })))
+    .head("/pubkey", () =>
+      servePubkey().then((r) => new Response(null, { headers: r.headers })),
+    )
     .head("/arch/:arch/:file", ({ params }) => {
-      if (params.arch !== "x86_64") throw new HttpError(422, "arch is x86_64 only");
-      return serveArchDb(params.file, true);
+      if (params.arch !== "x86_64")
+        throw new HttpError(422, "arch is x86_64 only");
+      return serveArch(params.file, true);
     })
     .head("/dists/:suite/:comp/:archdir/:file", ({ params }) => {
-      if (params.comp !== APT_COMPONENT) throw new HttpError(404, "unknown component");
-      if (params.archdir !== "binary-amd64") throw new HttpError(404, "unknown architecture");
+      if (params.comp !== APT_COMPONENT)
+        throw new HttpError(404, "unknown component");
+      if (params.archdir !== "binary-amd64")
+        throw new HttpError(404, "unknown architecture");
       return serveAptFile(params.suite, params.file, true);
     })
-    .head("/pool/:comp/:filename", ({ params }) => servePool(params.comp, params.filename, true))
-    .head("/rpmrepo/repodata/:file", ({ params }) => serveRpmRepo(params.file, true))
-    .head("/rpmrepo/:filename", ({ params }) => serveRpmPool(params.filename, true))
+    .head("/pool/:comp/:filename", ({ params }) =>
+      servePool(params.comp, params.filename, true),
+    )
+    .head("/rpmrepo/repodata/:file", ({ params }) =>
+      serveRpmRepo(params.file, true),
+    )
+    .head("/rpmrepo/:filename", ({ params }) =>
+      serveRpmPool(params.filename, true),
+    )
     .head("/:ref/:p1/:p2/:p3", ({ params }) =>
-      serveDownload(params.ref, "app", params.p1, params.p2, params.p3, true))
+      serveDownload(params.ref, "app", params.p1, params.p2, params.p3, true),
+    )
     .head("/:ref/:p1/:p2/:p3/:p4", ({ params }) =>
       serveDownload(
         params.ref,
@@ -1174,7 +1329,8 @@ export function createApp(opts: AppOptions) {
         params.p3,
         params.p4,
         true,
-      ));
+      ),
+    );
 
   return {
     app,
