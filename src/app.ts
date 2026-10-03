@@ -686,6 +686,7 @@ export function createApp(opts: AppOptions) {
 
   interface RpmRepo {
     rpmName: string;
+    checksum: string;
     primary: Uint8Array;
     filelists: Uint8Array;
     other: Uint8Array;
@@ -705,7 +706,9 @@ export function createApp(opts: AppOptions) {
     // Signing first: unsigned servers answer 503 even with no builds.
     const k = await signKey();
     const pkg = await readRunFile("linux", "latest", "app", "rpm");
-    const key = `${pkg.file}:${pkg.data.length}`;
+
+    const pkgHash = await sha256Hex(pkg.data);
+    const key = `${pkg.file}:${pkgHash}`;
     if (rpmCache && rpmCache.key === key) return rpmCache.repo;
     const info = parseRpm(pkg.data);
     if (!info.name || !info.version || !info.release || !info.arch) {
@@ -715,7 +718,7 @@ export function createApp(opts: AppOptions) {
       );
     }
     const rpmName = rpmFileName(info);
-    const checksum = await sha256Hex(pkg.data);
+    const checksum = pkgHash;
     const enc = new TextEncoder();
     const now = Math.floor(Date.now() / 1000);
     const location = rpmName;
@@ -753,10 +756,16 @@ export function createApp(opts: AppOptions) {
       await meta("filelists", filelistsRaw, filelists),
       await meta("other", otherRaw, other),
     ]);
-    // Binary mode over exact bytes: dnf/rpm verifiers reject text-mode
-    // (CRLF-canonicalized) detached signatures with "Bad PGP signature".
     const repomdAsc = await detachSign(k, enc.encode(repomd));
-    const repo = { rpmName, primary, filelists, other, repomd, repomdAsc };
+    const repo = {
+      rpmName,
+      checksum,
+      primary,
+      filelists,
+      other,
+      repomd,
+      repomdAsc,
+    };
     rpmCache = { key, repo };
     return repo;
   }
@@ -820,9 +829,17 @@ export function createApp(opts: AppOptions) {
       throw new HttpError(404, "unknown pool file");
     }
     const pkg = await readRunFile("linux", "latest", "app", "rpm");
-    const repo = await rpmRepo();
+    let repo = await rpmRepo();
     if (filename !== repo.rpmName) {
       throw new HttpError(404, `pool has no ${filename}`);
+    }
+
+    if ((await sha256Hex(pkg.data)) !== repo.checksum) {
+      rpmCache = null;
+      repo = await rpmRepo();
+      if (filename !== repo.rpmName) {
+        throw new HttpError(404, `pool has no ${filename}`);
+      }
     }
     const headers = {
       "Content-Type": "application/octet-stream",
@@ -908,14 +925,16 @@ export function createApp(opts: AppOptions) {
     // Signing first: unsigned servers answer 503 even with no builds.
     const k = await signKey();
     const pkg = await readRunFile("linux", "latest", "app", "pkg.zst");
-    const key = `${pkg.file}:${pkg.data.length}`;
-    if (archCache && archCache.key === key) return archCache.repo;
     let sig: Uint8Array | undefined;
     try {
       sig = (await readRunFile("linux", "latest", "app", "pkg.zst.sig")).data;
     } catch (e) {
       if (!(e instanceof HttpError) || (e as HttpError).status !== 404) throw e;
     }
+    const pkgHash = await sha256Hex(pkg.data);
+    const sigHash = sig ? await sha256Hex(sig) : "";
+    const key = `${pkg.file}:${pkgHash}:${sigHash}`;
+    if (archCache && archCache.key === key) return archCache.repo;
     const ap = await archPackageForBytes(pkg.file, pkg.data, sig);
     if (ap.arch !== "x86_64") {
       throw new HttpError(502, `arch repo: unexpected package arch ${ap.arch}`);
@@ -1041,6 +1060,8 @@ export function createApp(opts: AppOptions) {
   // -- APT (dists/stable/...) --------------------------------------------------
 
   interface AptRepo {
+    sha256: string;
+    poolName: string;
     packages: string;
     packagesGz: Uint8Array;
     release: string;
@@ -1053,7 +1074,8 @@ export function createApp(opts: AppOptions) {
     // Signing first: unsigned servers answer 503 even with no builds.
     const k = await signKey();
     const deb = await readRunFile("linux", "latest", "app", "deb");
-    const key = `${deb.file}:${deb.data.length}`;
+    const debHash = await sha256Hex(deb.data);
+    const key = `${deb.file}:${debHash}`;
     if (aptCache && aptCache.key === key && aptCache.expires > Date.now()) {
       return aptCache.repo;
     }
@@ -1090,6 +1112,8 @@ export function createApp(opts: AppOptions) {
       detachSign(k, releaseBytes),
     ]);
     const repo = {
+      sha256: h.sha256,
+      poolName,
       packages: entry,
       packagesGz,
       release,
@@ -1350,6 +1374,9 @@ export function createApp(opts: AppOptions) {
       targetsCache.clear();
       inflight.clear();
       cachedIndex = null;
+      rpmCache = null;
+      archCache = null;
+      aptCache = null;
     },
   };
 }

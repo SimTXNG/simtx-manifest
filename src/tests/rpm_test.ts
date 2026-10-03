@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertNotEquals, assertStringIncludes } from "@std/assert";
 import {
   buildFilelistsXml,
   buildOtherXml,
@@ -7,6 +7,7 @@ import {
   parseRpm,
   type RpmInfo,
 } from "../repo-rpm.ts";
+import { sha256Hex } from "../repo-util.ts";
 import { makeRun, req, runsResponse, testCtx } from "./util.ts";
 
 const TEST_FPR = "A5202902915B1536B896B54F864161347A1E7943";
@@ -158,6 +159,82 @@ Deno.test("rpm: repodata routes from fixture", async () => {
     );
     const miss = await ctx.app.handle(req("/rpmrepo/other-9.9-9.x86_64.rpm"));
     assertEquals(miss.status, 404);
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+async function gunzip(data: Uint8Array): Promise<Uint8Array> {
+  const ds = new DecompressionStream("gzip");
+  const buf = await new Response(
+    new Blob([data as unknown as BlobPart]).stream().pipeThrough(ds),
+  ).arrayBuffer();
+  return new Uint8Array(buf);
+}
+
+Deno.test("rpm: rebuild with same filename+length refreshes repodata checksum", async () => {
+  // Regression test for `dnf update simtx` failing with
+  // "checksum doesn't match" after rerunning build-linux.yml: the new
+  // build kept the filename and byte length but changed bytes, and the
+  // repodata cache (keyed on file+length) kept serving the old
+  // primary.xml checksum against fresh pool bytes.
+  const dir = await Deno.makeTempDir();
+  try {
+    const orig = await Deno.readFile(new URL("simtx-test.rpm", FIX));
+    // Mutated rebuild: same length, different bytes. The last byte is
+    // payload, so header parsing (name/version/release/arch) is intact.
+    const rebuilt = orig.slice();
+    rebuilt[rebuilt.length - 1] ^= 0xff;
+    assertEquals(rebuilt.length, orig.length);
+    assertNotEquals(
+      await sha256Hex(rebuilt),
+      await sha256Hex(orig),
+    );
+
+    const run1 = makeRun({ id: 9301 });
+    const run2 = makeRun({ id: 9302 });
+    let current = run1;
+    await Deno.mkdir(`${dir}/9301`, { recursive: true });
+    await Deno.writeFile(`${dir}/9301/simtx-test.rpm`, orig);
+    await Deno.mkdir(`${dir}/9302`, { recursive: true });
+    await Deno.writeFile(`${dir}/9302/simtx-test.rpm`, rebuilt);
+
+    const ctx = testCtx(dir, {
+      signingKey: Deno.readTextFileSync(
+        new URL("./test-signing-key.asc", import.meta.url),
+      ),
+      signingKeyFpr: TEST_FPR,
+      // No run-cache TTL so the second half resolves the new run while
+      // the repodata cache persists — the stale-key scenario.
+      latestTtlMs: 0,
+      fetchImpl: () => Promise.resolve(runsResponse([current])),
+    });
+
+    const poolName = "simtx-test-1.0-2.x86_64.rpm";
+    const pool1 = await ctx.app.handle(req(`/rpmrepo/${poolName}`));
+    assertEquals(pool1.status, 200);
+    const primary1 = await ctx.app.handle(req("/rpmrepo/repodata/primary.xml.gz"));
+    assertEquals(primary1.status, 200);
+    const text1 = new TextDecoder().decode(
+      await gunzip(new Uint8Array(await primary1.arrayBuffer())),
+    );
+    assertStringIncludes(text1, await sha256Hex(orig));
+
+    current = run2;
+    const pool2 = await ctx.app.handle(req(`/rpmrepo/${poolName}`));
+    assertEquals(pool2.status, 200);
+    const pool2Hash = await sha256Hex(
+      new Uint8Array(await pool2.arrayBuffer()),
+    );
+    assertEquals(pool2Hash, await sha256Hex(rebuilt));
+
+    const primary2 = await ctx.app.handle(req("/rpmrepo/repodata/primary.xml.gz"));
+    assertEquals(primary2.status, 200);
+    const text2 = new TextDecoder().decode(
+      await gunzip(new Uint8Array(await primary2.arrayBuffer())),
+    );
+    // Pool bytes and repodata must agree; the old checksum must be gone.
+    assertStringIncludes(text2, pool2Hash);
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
