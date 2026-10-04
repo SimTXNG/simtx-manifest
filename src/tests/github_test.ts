@@ -6,7 +6,7 @@ import {
 } from "@std/assert";
 import { strToU8, zipSync } from "fflate";
 import { HttpError } from "../app.ts";
-import { makeRun, runsResponse, testCtx } from "./util.ts";
+import { makeRun, runsResponse, tagsResponse, testCtx } from "./util.ts";
 
 async function withTempDir(fn: (dir: string) => Promise<void>) {
   const dir = await Deno.makeTempDir();
@@ -109,9 +109,42 @@ Deno.test("github: resolveRun caches per workflow@ref and honors TTL", async () 
   });
 });
 
+Deno.test("github: resolveVersion prefers config, else latest tag stripped", async () => {
+  await withTempDir(async (dir) => {
+    const configured = testCtx(dir, {
+      versionReturn: "1.2.3",
+      fetchImpl: () => {
+        throw new Error("must not hit network when configured");
+      },
+    });
+    assertEquals(await configured.resolveVersion(), "1.2.3");
+
+    let calls = 0;
+    const fallback = testCtx(dir, {
+      tagTtlMs: 60_000,
+      fetchImpl: (input) => {
+        assertStringIncludes(String(input), "/tags?per_page=100");
+        calls++;
+        return Promise.resolve(tagsResponse(["v0.1.0-alpha-5"]));
+      },
+    });
+    assertEquals(await fallback.resolveVersion(), "0.1.0-alpha-5");
+    assertEquals(await fallback.resolveVersion(), "0.1.0-alpha-5");
+    assertEquals(calls, 1);
+
+    const empty = testCtx(dir, {
+      fetchImpl: () => Promise.resolve(tagsResponse([])),
+    });
+    const err = await assertRejects(() => empty.resolveVersion());
+    assert(err instanceof HttpError);
+    assertEquals((err as HttpError).status, 503);
+  });
+});
+
 Deno.test("github: latestStatus picks newest built_at across platforms", async () => {
   await withTempDir(async (dir) => {
     const ctx = testCtx(dir, {
+      versionReturn: "9.9.9",
       fetchImpl: (input) => {
         const wf = String(input);
         const updated = wf.includes("linux")
@@ -125,6 +158,7 @@ Deno.test("github: latestStatus picks newest built_at across platforms", async (
     const s = await ctx.latestStatus();
     assertEquals(s.newest_built_at, "2026-05-01T00:00:00Z");
     assertEquals(s.linux!.built_at, "2026-01-01T00:00:00Z");
+    assertEquals(s.version, "9.9.9");
   });
 });
 
@@ -186,6 +220,7 @@ Deno.test("github: getTargets serves fresh, then stale on failure", async () => 
     );
     const okFetch = () => Promise.resolve(runsResponse([makeRun({ id: runId })]));
     const ctx = testCtx(dir, {
+      versionReturn: "9.9.9",
       latestTtlMs: 15,
       tagTtlMs: 15,
       targetsTtlMs: 15,

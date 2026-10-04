@@ -48,7 +48,7 @@ GET  /rpmrepo/...         Fedora repo (repodata/, pool rpm)
 GET  /api/latest          newest build per platform, as JSON
 GET  /api/targets[/ref]   which downloads exist for a ref, as JSON
 GET  /healthz             liveness probe, answers ok
-GET  /version             VERSION_RETURN value, 503 when unset
+GET  /version             VERSION_RETURN value, else latest tag minus leading v (503 when neither works)
 ```
 
 HEAD works everywhere GET does. Bad input answers 422 with the validation details. A ref with no successful build, or an artifact missing the file, answers 404.
@@ -69,7 +69,7 @@ All settings come from the environment, validated on startup. Copy `.env.example
 | `PREFETCH` | `1` | Warm the cache on startup; `0` disables it |
 | `REFRESH_INTERVAL` | `300` | Seconds between background refreshes; `0` disables them |
 | `CACHE_MAX_RUNS` | `10` | Old run dirs past this count get pruned; `0` keeps everything |
-| `VERSION_RETURN` | (unset) | String returned by `/version` |
+| `VERSION_RETURN` | (unset) | String returned by `/version` (and `version` in `/api/latest`, `/api/targets`, `/api/updates/latest`); when unset the latest git tag is used with one leading `v`/`V` stripped (`v0.1.0-alpha-5` → `0.1.0-alpha-5`), cached for `TAG_TTL` seconds, 503 if no tag can be found |
 
 Bad values fail fast with the exact problem printed, instead of silently running on `NaN`.
 

@@ -28,6 +28,7 @@ import {
   parseOr422,
   RefSchema,
   RunListSchema,
+  TagsSchema,
   TargetDefSchema,
 } from "./validation.ts";
 import type {
@@ -110,6 +111,12 @@ export const text = (body: string, status = 200) =>
     status,
     headers: { "content-type": "text/plain; charset=utf-8" },
   });
+
+export function stripLeadingV(tag: string): string {
+  const t = tag.trim();
+  if (t.length > 1 && (t[0] === "v" || t[0] === "V")) return t.slice(1);
+  return t;
+}
 
 export const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data, null, 2) + "\n", {
@@ -210,6 +217,7 @@ export function createApp(opts: AppOptions) {
   const targetsCache = new Map<string, { data: unknown; expires: number }>();
   const inflight = new Map<number, Promise<string>>();
   let cachedIndex: Uint8Array | null = null;
+  let cachedVersion: { value: string; expires: number } | null = null;
 
   const gh = (path: string, init: RequestInit = {}) =>
     fetchFn(`https://api.github.com/repos/${REPO}${path}`, {
@@ -239,11 +247,49 @@ export function createApp(opts: AppOptions) {
     return parsed.data;
   }
 
+  async function latestTagVersion(): Promise<string> {
+    if (cachedVersion && cachedVersion.expires > Date.now()) {
+      return cachedVersion.value;
+    }
+    let tags;
+    try {
+      tags = await ghJson(`/tags?per_page=100`, TagsSchema);
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 503) throw e;
+      throw new HttpError(
+        503,
+        `VERSION_RETURN is not configured and tag lookup failed: ${(e as Error).message}`,
+      );
+    }
+    const name = tags[0]?.name?.trim();
+    if (!name) {
+      throw new HttpError(
+        503,
+        "VERSION_RETURN is not configured and no tags found",
+      );
+    }
+    const value = stripLeadingV(name);
+    if (!value) {
+      throw new HttpError(
+        503,
+        "VERSION_RETURN is not configured and no tags found",
+      );
+    }
+    cachedVersion = { value, expires: Date.now() + TAG_TTL };
+    return value;
+  }
+
+  function resolveVersion(): Promise<string> {
+    if (VERSION_RETURN) return Promise.resolve(VERSION_RETURN);
+    return latestTagVersion();
+  }
+
   async function latestStatus() {
-    const [linuxRun, windowsRun, macosRun] = await Promise.all([
+    const [linuxRun, windowsRun, macosRun, version] = await Promise.all([
       resolveRun(WORKFLOWS.linux, "latest"),
       resolveRun(WORKFLOWS.windows, "latest"),
       resolveRun(WORKFLOWS.macos, "latest"),
+      resolveVersion(),
     ]);
     const linux = runInfo(linuxRun);
     const windows = runInfo(windowsRun);
@@ -253,7 +299,7 @@ export function createApp(opts: AppOptions) {
     ) as string[];
     const newest = times.sort().at(-1) ?? null;
     return {
-      version: VERSION_RETURN ?? null,
+      version,
       repo: REPO,
       newest_built_at: newest,
       linux,
@@ -264,12 +310,15 @@ export function createApp(opts: AppOptions) {
 
   async function buildTargets(ref: string) {
     const oss = Object.keys(WORKFLOWS) as Os[];
-    const runs = await Promise.all(
-      oss.map(async (os) => ({
-        os,
-        run: await resolveRun(WORKFLOWS[os], ref),
-      })),
-    );
+    const [version, runs] = await Promise.all([
+      resolveVersion(),
+      Promise.all(
+        oss.map(async (os) => ({
+          os,
+          run: await resolveRun(WORKFLOWS[os], ref),
+        })),
+      ),
+    ]);
     const targets = await Promise.all(
       TARGET_DEFS.map(async (t) => {
         const base = {
@@ -319,7 +368,7 @@ export function createApp(opts: AppOptions) {
     );
     return {
       ref,
-      version: VERSION_RETURN ?? null,
+      version,
       stale: false,
       targets,
     };
@@ -545,9 +594,7 @@ export function createApp(opts: AppOptions) {
   }
 
   async function latestUpdateInfo() {
-    if (!VERSION_RETURN) {
-      throw new HttpError(503, "VERSION_RETURN is not configured");
-    }
+    const version = await resolveVersion();
     const run = await resolveRun(WORKFLOWS.linux, "latest");
     if (!run) throw new HttpError(404, "No successful linux build found");
     const dir = await ensureExtracted(run.id);
@@ -574,7 +621,7 @@ export function createApp(opts: AppOptions) {
     const ref = run.head_branch;
     const url = (kind: string) => `/${ref}/app/linux/amd64/${kind}`;
     return {
-      version: VERSION_RETURN,
+      version,
       ref,
       built_at: run.updated_at,
       appimage: appimage,
@@ -1268,12 +1315,7 @@ export function createApp(opts: AppOptions) {
       serveRpmPool(params.filename, false),
     )
     .get("/healthz", () => text("ok"))
-    .get("/version", () => {
-      if (!VERSION_RETURN) {
-        throw new HttpError(503, "VERSION_RETURN is not configured");
-      }
-      return text(VERSION_RETURN);
-    })
+    .get("/version", async () => text(await resolveVersion()))
     .get("/:ref/:p1/:p2/:p3", ({ params, request }) =>
       serveDownload(
         params.ref,
@@ -1361,6 +1403,8 @@ export function createApp(opts: AppOptions) {
     latestStatus,
     getTargets,
     resolveRun,
+    resolveVersion,
+    latestTagVersion,
     serveDownload,
     downloadArtifact,
     ensureExtracted,
@@ -1374,6 +1418,7 @@ export function createApp(opts: AppOptions) {
       targetsCache.clear();
       inflight.clear();
       cachedIndex = null;
+      cachedVersion = null;
       rpmCache = null;
       archCache = null;
       aptCache = null;

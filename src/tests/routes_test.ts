@@ -2,7 +2,14 @@ import {
   assertEquals,
   assertStringIncludes,
 } from "@std/assert";
-import { makeRun, req, runsResponse, testCtx } from "./util.ts";
+import { stripLeadingV } from "../app.ts";
+import {
+  makeRun,
+  req,
+  runsResponse,
+  tagsResponse,
+  testCtx,
+} from "./util.ts";
 
 async function withTempDir(fn: (dir: string) => Promise<void>) {
   const dir = await Deno.makeTempDir();
@@ -59,17 +66,78 @@ Deno.test("routes: healthz GET + HEAD", async () => {
   });
 });
 
-Deno.test("routes: version set vs unset", async () => {
+Deno.test("routes: version set vs unset falls back to latest tag", async () => {
   await withTempDir(async (dir) => {
     const set = testCtx(dir, { versionReturn: "v0.0.1" });
     const res = await set.app.handle(req("/version"));
     assertEquals(res.status, 200);
     assertEquals(await res.text(), "v0.0.1\n");
 
-    const unset = testCtx(dir);
-    const missing = await unset.app.handle(req("/version"));
+    const fallback = testCtx(dir, {
+      fetchImpl: (input) =>
+        String(input).includes("/tags")
+          ? Promise.resolve(tagsResponse(["v0.1.0-alpha-5"]))
+          : Promise.resolve(runsResponse([makeRun()])),
+    });
+    const viaTag = await fallback.app.handle(req("/version"));
+    assertEquals(viaTag.status, 200);
+    assertEquals(await viaTag.text(), "0.1.0-alpha-5\n");
+  });
+});
+
+Deno.test("routes: version fallback strips one leading v/V", async () => {
+  await withTempDir(async (dir) => {
+    for (const [tag, want] of [
+      ["v1.2.3", "1.2.3"],
+      ["V1.2.3", "1.2.3"],
+      ["1.2.3", "1.2.3"],
+    ] as Array<[string, string]>) {
+      const ctx = testCtx(dir, {
+        fetchImpl: () => Promise.resolve(tagsResponse([tag])),
+      });
+      const res = await ctx.app.handle(req("/version"));
+      assertEquals(res.status, 200, tag);
+      assertEquals(await res.text(), `${want}\n`, tag);
+    }
+    assertEquals(stripLeadingV("v0.1.0-alpha-5"), "0.1.0-alpha-5");
+    assertEquals(stripLeadingV("V2.0"), "2.0");
+    assertEquals(stripLeadingV("1.0"), "1.0");
+  });
+});
+
+Deno.test("routes: version fallback 503 when no tags or lookup fails", async () => {
+  await withTempDir(async (dir) => {
+    const empty = testCtx(dir, {
+      fetchImpl: (input) =>
+        String(input).includes("/tags")
+          ? Promise.resolve(tagsResponse([]))
+          : Promise.resolve(runsResponse([makeRun()])),
+    });
+    const missing = await empty.app.handle(req("/version"));
     assertEquals(missing.status, 503);
     assertStringIncludes(await missing.text(), "VERSION_RETURN");
+
+    const failing = testCtx(dir, {
+      fetchImpl: () => Promise.resolve(new Response("err", { status: 500 })),
+    });
+    const failed = await failing.app.handle(req("/version"));
+    assertEquals(failed.status, 503);
+    assertStringIncludes(await failed.text(), "VERSION_RETURN");
+  });
+});
+
+Deno.test("routes: version fallback caches the tag lookup", async () => {
+  await withTempDir(async (dir) => {
+    let calls = 0;
+    const ctx = testCtx(dir, {
+      fetchImpl: (input) => {
+        if (String(input).includes("/tags")) calls++;
+        return Promise.resolve(tagsResponse(["v3.2.1"]));
+      },
+    });
+    assertEquals(await (await ctx.app.handle(req("/version"))).text(), "3.2.1\n");
+    assertEquals(await (await ctx.app.handle(req("/version"))).text(), "3.2.1\n");
+    assertEquals(calls, 1);
   });
 });
 
@@ -306,9 +374,25 @@ Deno.test("routes: api/updates/latest shape + version-unset 503", async () => {
     assertEquals(body["sha256"], hash);
 
     const unset = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(runsResponse([run])),
+      fetchImpl: (input) =>
+        String(input).includes("/tags")
+          ? Promise.resolve(tagsResponse([]))
+          : Promise.resolve(runsResponse([run])),
     });
     assertEquals((await unset.app.handle(req("/api/updates/latest"))).status, 503);
+
+    const viaTag = testCtx(dir, {
+      fetchImpl: (input) =>
+        String(input).includes("/tags")
+          ? Promise.resolve(tagsResponse(["v0.1.0-alpha-5"]))
+          : Promise.resolve(runsResponse([run])),
+    });
+    const tagged = await viaTag.app.handle(req("/api/updates/latest"));
+    assertEquals(tagged.status, 200);
+    assertEquals(
+      (await tagged.json() as Record<string, unknown>)["version"],
+      "0.1.0-alpha-5",
+    );
   });
 });
 

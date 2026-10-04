@@ -169,6 +169,9 @@ export const RunListSchema = z.object({
 });
 export type RunList = z.infer<typeof RunListSchema>;
 
+export const TagsSchema = z.array(z.object({ name: z.string() }));
+export type Tags = z.infer<typeof TagsSchema>;
+
 export const ArtifactsSchema = z.object({
   artifacts: z.array(
     z.object({ id: z.number(), expired: z.boolean() }),

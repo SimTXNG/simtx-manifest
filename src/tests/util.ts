@@ -22,6 +22,16 @@ export function runsResponse(runs: Run[]): Response {
   });
 }
 
+export function tagsResponse(names: string[]): Response {
+  return new Response(
+    JSON.stringify(names.map((name) => ({ name }))),
+    {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    },
+  );
+}
+
 export function baseOpts(
   cacheDir: string,
   extra: Partial<AppOptions> = {},
