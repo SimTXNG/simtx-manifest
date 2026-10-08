@@ -47,6 +47,9 @@ GET  /arch/x86_64/...     Arch repo (simtx.db[.tar.gz][.sig], simtx.files...)
 GET  /rpmrepo/...         Fedora repo (repodata/, pool rpm)
 GET  /api/latest          newest build per platform, as JSON
 GET  /api/targets[/ref]   which downloads exist for a ref, as JSON
+GET  /api/uploads/:ref    uploaded binaries for a ref, as JSON (Bearer auth)
+PUT  /upload/<ref>/<app|cli>/<linux|windows|macos>/<amd64|arm64>/<kind>[?filename=]
+DELETE /upload/<ref>/<app|cli>/<linux|windows|macos>/<amd64|arm64>/<kind>
 GET  /healthz             liveness probe, answers ok
 GET  /version             VERSION_RETURN value, else latest tag minus leading v (503 when neither works)
 ```
@@ -70,8 +73,33 @@ All settings come from the environment, validated on startup. Copy `.env.example
 | `REFRESH_INTERVAL` | `300` | Seconds between background refreshes; `0` disables them |
 | `CACHE_MAX_RUNS` | `10` | Old run dirs past this count get pruned; `0` keeps everything |
 | `VERSION_RETURN` | (unset) | String returned by `/version` (and `version` in `/api/latest`, `/api/targets`, `/api/updates/latest`); when unset the latest git tag is used with one leading `v`/`V` stripped (`v0.1.0-alpha-5` → `0.1.0-alpha-5`), cached for `TAG_TTL` seconds, 503 if no tag can be found |
+| `UPLOAD_TOKEN` | (unset) | Bearer token guarding `PUT`/`DELETE /upload/...` and `GET /api/uploads/:ref`; unset means uploads answer 503 (disabled) |
+| `UPLOAD_MAX_MB` | `500` | Max bytes accepted for one upload |
 
 Bad values fail fast with the exact problem printed, instead of silently running on `NaN`.
+
+## Uploading binaries (no GitHub Actions)
+
+Binaries can be pushed directly with an authenticated `PUT`. One request carries
+one file as raw bytes; the URL path already identifies the target, and
+`?filename=` (or `X-Filename` header) sets the stored name. Omit it for a
+sensible default (`simtx-cli`, `upload.deb`, ...). The filename must match the
+target (a `.exe` is rejected for a `deb` slot, `../` and `/` are rejected).
+
+```sh
+curl -T ./simtx_0.1.0_amd64.deb \
+  -H "Authorization: Bearer $UPLOAD_TOKEN" \
+  "http://127.0.0.1:8000/upload/latest/app/linux/amd64/deb?filename=simtx_0.1.0_amd64.deb"
+curl -X DELETE -H "Authorization: Bearer $UPLOAD_TOKEN" \
+  "http://127.0.0.1:8000/upload/latest/app/linux/amd64/deb"
+```
+
+Uploads land under `<CACHE_DIR>/uploads/<ref>/...` and **shadow GitHub
+artifacts** everywhere: download routes, `/api/targets`, and the APT/Arch/RPM
+repo builders all prefer the upload when one exists. Uploading invalidates the
+cached target/repo metadata for that ref. A successful `PUT` answers `201`
+with `{ref, product, os, arch, kind, file, size, sha256}`. Auth failures answer
+`401`, oversized bodies `413`, disabled uploads `503`.
 
 ## How it works
 
@@ -85,13 +113,14 @@ On startup it prefetches `latest` for all three platforms in the background, the
 deno task test
 ```
 
-Suites live in `src/tests/`: route behavior, GitHub API handling, cache pruning, zip extraction, input validation, and the pure helpers. They run against `app.handle()` in memory with a stubbed fetch, so no token or network access is needed.
+Suites live in `src/tests/`: route behavior, GitHub API handling, cache pruning, zip extraction, input validation, authenticated uploads, and the pure helpers. They run against `app.handle()` in memory with a stubbed fetch, so no token or network access is needed.
 
 ## Project layout
 
 ```text
 src/index.ts      env parsing, cache warmup, Deno.serve
 src/app.ts        Elysia routes, GitHub layer, on-disk cache
+src/uploads.ts    authenticated direct-upload store + handlers (Zod-validated)
 src/validation.ts Zod schemas for params, config, and API payloads
 src/tests/        one suite per area above
 src/static/index.html landing page

@@ -129,6 +129,8 @@ export const EnvSchema = z.object({
   LATEST_REF: z.string().optional(),
   VERSION_RETURN: z.string().optional(),
   SIGNING_KEY_FILE: z.string().optional(),
+  UPLOAD_TOKEN: z.string().optional(),
+  UPLOAD_MAX_MB: z.coerce.number().positive().default(500),
 });
 export type Env = z.infer<typeof EnvSchema>;
 
@@ -148,6 +150,8 @@ export const AppOptionsSchema = z.object({
   latestRef: z.string().optional(),
   versionReturn: z.string().optional(),
   signingKey: z.string().optional(),
+  uploadToken: z.string().min(1).optional(),
+  uploadMaxBytes: z.number().finite().positive().optional(),
 });
 export type AppOptions = z.infer<typeof AppOptionsSchema>;
 

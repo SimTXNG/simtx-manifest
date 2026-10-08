@@ -27,6 +27,8 @@ const parsed = EnvSchema.safeParse({
   LATEST_REF: env("LATEST_REF"),
   VERSION_RETURN: env("VERSION_RETURN"),
   SIGNING_KEY_FILE: env("SIGNING_KEY_FILE"),
+  UPLOAD_TOKEN: env("UPLOAD_TOKEN"),
+  UPLOAD_MAX_MB: env("UPLOAD_MAX_MB"),
 });
 if (!parsed.success) {
   console.error("Invalid configuration:\n" + z.prettifyError(parsed.error));
@@ -78,6 +80,8 @@ const ctx = createApp({
   latestRef: cfg.LATEST_REF,
   versionReturn: cfg.VERSION_RETURN?.trim() || undefined,
   signingKey,
+  uploadToken: cfg.UPLOAD_TOKEN?.trim() || undefined,
+  uploadMaxBytes: cfg.UPLOAD_MAX_MB * 1024 * 1024,
 });
 
 await Deno.mkdir(CACHE_DIR, { recursive: true });

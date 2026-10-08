@@ -21,6 +21,14 @@ import {
 import { clearSign, detachSign, loadSigningKey } from "./repo-sign.ts";
 import { gzipBytes, sha256Hex } from "./repo-util.ts";
 import {
+  findUploadFile,
+  handleDeleteUpload,
+  handleListUploads,
+  handleUpload,
+  readUploadFile,
+  uploadTargetDir,
+} from "./uploads.ts";
+import {
   AppOptionsSchema,
   ArtifactsSchema,
   DownloadParamsSchema,
@@ -192,6 +200,9 @@ export type AppOptions = ValidatedOptions & {
   signingKeyFpr?: string;
 };
 
+// Direct-upload store + handlers live in ./uploads.ts (Zod-validated).
+// Uploads shadow GitHub artifacts on every read path when present.
+
 // Repo hosting (APT + Arch) signs metadata with the package-signing key.
 // Unsigned mode serves packages but answers 503 on all repo-metadata
 // routes: never ship unverifiable metadata.
@@ -209,6 +220,8 @@ export function createApp(opts: AppOptions) {
   const CACHE_MAX_RUNS = cfg.cacheMaxRuns;
   const LATEST_REF = cfg.latestRef;
   const VERSION_RETURN = cfg.versionReturn?.trim() || undefined;
+  const UPLOAD_TOKEN = cfg.uploadToken?.trim() || undefined;
+  const UPLOAD_MAX_BYTES = cfg.uploadMaxBytes ?? 524_288_000;
   const INDEX_URL =
     opts.indexFileUrl ?? new URL("./static/index.html", import.meta.url);
 
@@ -246,6 +259,46 @@ export function createApp(opts: AppOptions) {
     }
     return parsed.data;
   }
+
+  // Upload wiring: ./uploads.ts owns the store + handlers (Zod-validated);
+  // app-side caches are invalidated through onMutated.
+  function invalidateUploadCaches(ref: string): void {
+    targetsCache.delete(ref);
+    aptCache = null;
+    archCache = null;
+    rpmCache = null;
+  }
+
+  const uploadDeps = {
+    cacheDir: CACHE_DIR,
+    uploadToken: UPLOAD_TOKEN,
+    maxBytes: UPLOAD_MAX_BYTES,
+    matches: matchesTarget,
+    onMutated: invalidateUploadCaches,
+    targets: TARGET_DEFS,
+  };
+  const findUpload = (
+    ref: string,
+    product: string,
+    os: string,
+    arch: string,
+    kind: string,
+  ) => findUploadFile(CACHE_DIR, ref, product, os, arch, kind, matchesTarget);
+  const readUpload = (
+    ref: string,
+    product: string,
+    os: string,
+    arch: string,
+    kind: string,
+  ) => readUploadFile(CACHE_DIR, ref, product, os, arch, kind, matchesTarget);
+  const uploadPath = (
+    ref: string,
+    product: string,
+    os: string,
+    arch: string,
+    kind: string,
+    file: string,
+  ) => `${uploadTargetDir(CACHE_DIR, ref, product, os, arch, kind)}/${file}`;
 
   async function latestTagVersion(): Promise<string> {
     if (cachedVersion && cachedVersion.expires > Date.now()) {
@@ -325,6 +378,24 @@ export function createApp(opts: AppOptions) {
           ...t,
           url: `/${ref}/${t.product}/${t.os}/${t.arch}/${t.kind}`,
         };
+        // Uploads shadow GitHub artifacts.
+        const upFile = await findUpload(ref, t.product, t.os, t.arch, t.kind);
+        if (upFile) {
+          try {
+            const { size } = await Deno.stat(
+              uploadPath(ref, t.product, t.os, t.arch, t.kind, upFile),
+            );
+            return {
+              ...base,
+              available: true,
+              file: upFile,
+              size,
+              reason: null,
+            };
+          } catch {
+            /* fall through to GitHub */
+          }
+        }
         const run = runs.find((r) => r.os === t.os)?.run ?? null;
         if (!run) {
           return {
@@ -595,6 +666,62 @@ export function createApp(opts: AppOptions) {
 
   async function latestUpdateInfo() {
     const version = await resolveVersion();
+    // Uploads shadow GitHub artifacts for the rolling "latest" AppImage feed.
+    const upAppimage = await findUpload(
+      "latest",
+      "app",
+      "linux",
+      "amd64",
+      "appimage",
+    );
+    const upZsync = await findUpload(
+      "latest",
+      "app",
+      "linux",
+      "amd64",
+      "appimage-zsync",
+    );
+    const upShaFile = await findUpload(
+      "latest",
+      "app",
+      "linux",
+      "amd64",
+      "appimage-sha256",
+    );
+    if (upAppimage) {
+      const shaDir = uploadTargetDir(
+        CACHE_DIR,
+        "latest",
+        "app",
+        "linux",
+        "amd64",
+        "appimage-sha256",
+      );
+      let sha256: string | null = null;
+      if (upShaFile) {
+        try {
+          const raw = (
+            await Deno.readTextFile(`${shaDir}/${upShaFile}`)
+          ).trim().split(/\s+/)[0] ?? "";
+          sha256 = /^[0-9a-fA-F]{64}$/.test(raw) ? raw.toLowerCase() : null;
+        } catch {
+          /* ignore */
+        }
+      }
+      const url = (kind: string) => `/latest/app/linux/amd64/${kind}`;
+      return {
+        version,
+        ref: "latest",
+        built_at: null,
+        appimage: upAppimage,
+        appimage_url: url("appimage"),
+        zsync: upZsync,
+        zsync_url: upZsync ? url("appimage-zsync") : null,
+        sha256_file: upShaFile,
+        sha256_url: upShaFile ? url("appimage-sha256") : null,
+        sha256,
+      };
+    }
     const run = await resolveRun(WORKFLOWS.linux, "latest");
     if (!run) throw new HttpError(404, "No successful linux build found");
     const dir = await ensureExtracted(run.id);
@@ -643,13 +770,58 @@ export function createApp(opts: AppOptions) {
     isHead: boolean,
     rangeHeader: string | null = null,
   ): Promise<Response> {
-    const { ref, product, os, kind } = parseOr422(DownloadParamsSchema, {
+    const { ref, product, os, arch, kind } = parseOr422(DownloadParamsSchema, {
       ref: refRaw,
       product: productRaw,
       os: osRaw,
       arch: archRaw,
       kind: kindRaw,
     });
+    // Uploads shadow GitHub artifacts.
+    const upFile = await findUpload(ref, product, os, arch, kind);
+    if (upFile) {
+      const upPath = uploadPath(ref, product, os, arch, kind, upFile);
+      const upSize = (await Deno.stat(upPath)).size;
+      const upCacheControl =
+        ref === "latest" ? "no-cache" : "public, max-age=31536000, immutable";
+      const upHeaders = {
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${upFile}"`,
+        "X-Release-Ref": ref,
+        "Cache-Control": upCacheControl,
+        "Accept-Ranges": "bytes",
+      };
+      if (isHead) {
+        return new Response(null, {
+          headers: { ...upHeaders, "Content-Length": String(upSize) },
+        });
+      }
+      const upRange = parseRange(rangeHeader, upSize);
+      if (upRange === "invalid") {
+        return new Response("Range not satisfiable\n", {
+          status: 416,
+          headers: {
+            ...upHeaders,
+            "Content-Range": `bytes */${upSize}`,
+            "content-type": "text/plain; charset=utf-8",
+          },
+        });
+      }
+      if (upRange) {
+        const len = upRange.end - upRange.start + 1;
+        const data = (await Deno.readFile(upPath)).slice(upRange.start, upRange.end + 1);
+        return new Response(data, {
+          status: 206,
+          headers: {
+            ...upHeaders,
+            "Content-Length": String(len),
+            "Content-Range": `bytes ${upRange.start}-${upRange.end}/${upSize}`,
+          },
+        });
+      }
+      const upHeadersFull = new Headers({ ...upHeaders, "Content-Length": String(upSize) });
+      return new Response((await Deno.open(upPath)).readable, { headers: upHeadersFull });
+    }
     const workflow = WORKFLOWS[os];
 
     const run = await resolveRun(workflow, ref);
@@ -930,7 +1102,13 @@ export function createApp(opts: AppOptions) {
     ref: string,
     product: string,
     kind: string,
+    arch: string = os === "macos" ? "arm64" : "amd64",
   ) {
+    // Uploads shadow GitHub artifacts.
+    const up = await readUpload(ref, product, os, arch, kind);
+    if (up) {
+      return { run: { head_branch: ref } as Run, file: up.file, data: up.data };
+    }
     const run = await resolveRun(WORKFLOWS[os], ref);
     if (!run) {
       throw new HttpError(404, `No successful ${os} build found for "${ref}"`);
@@ -1316,6 +1494,31 @@ export function createApp(opts: AppOptions) {
     )
     .get("/healthz", () => text("ok"))
     .get("/version", async () => text(await resolveVersion()))
+    .get("/api/uploads/:ref", ({ request, params }) =>
+      handleListUploads(request, params.ref, uploadDeps)
+    )
+    .put("/upload/:ref/:p1/:p2/:p3/:p4", ({ params, request }) =>
+      handleUpload(
+        request,
+        params.ref,
+        params.p1,
+        params.p2,
+        params.p3,
+        params.p4,
+        uploadDeps,
+      )
+    )
+    .delete("/upload/:ref/:p1/:p2/:p3/:p4", ({ params, request }) =>
+      handleDeleteUpload(
+        request,
+        params.ref,
+        params.p1,
+        params.p2,
+        params.p3,
+        params.p4,
+        uploadDeps,
+      )
+    )
     .get("/:ref/:p1/:p2/:p3", ({ params, request }) =>
       serveDownload(
         params.ref,
