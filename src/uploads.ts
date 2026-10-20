@@ -7,9 +7,9 @@ import {
   RefSchema,
 } from "./validation.ts";
 
-// Authenticated direct-upload store (bypasses GitHub Actions).
+// Authenticated direct-upload store populated by CI.
 // Layout: <cacheDir>/uploads/<ref>/<product>/<os>/<arch>/<kind>/<filename>.
-// Uploads shadow GitHub artifacts on every read path when present.
+// Uploaded files are the sole artifact source on every read path.
 //
 // Matcher is injected (app.ts owns download matching) so this module has
 // no dependency back on app.ts.

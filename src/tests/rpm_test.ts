@@ -8,7 +8,7 @@ import {
   type RpmInfo,
 } from "../repo-rpm.ts";
 import { sha256Hex } from "../repo-util.ts";
-import { makeRun, req, runsResponse, testCtx } from "./util.ts";
+import { req, seedUpload, seedUploadFixture, testCtx } from "./util.ts";
 
 const TEST_FPR = "A5202902915B1536B896B54F864161347A1E7943";
 const FIX = new URL("./fixtures/", import.meta.url);
@@ -20,14 +20,6 @@ function signedCtx(dir: string) {
     ),
     signingKeyFpr: TEST_FPR,
   });
-}
-
-async function seedRun(dir: string, runId: number, ...files: string[]) {
-  await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
-  for (const f of files) {
-    await Deno.copyFile(new URL(f, FIX), `${dir}/${runId}/${f.split("/").pop()!}`);
-  }
-  return makeRun({ id: runId });
 }
 
 const info: RpmInfo = {
@@ -117,9 +109,7 @@ Deno.test("rpm: filelists + other + repomd goldens", () => {
 Deno.test("rpm: unsigned server answers 503 on repodata", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const ctx = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(runsResponse([])),
-    });
+    const ctx = testCtx(dir);
     for (const path of [
       "/rpmrepo/repodata/repomd.xml",
       "/rpmrepo/repodata/repomd.xml.asc",
@@ -136,9 +126,8 @@ Deno.test("rpm: unsigned server answers 503 on repodata", async () => {
 Deno.test("rpm: repodata routes from fixture", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const run = await seedRun(dir, 9201, "simtx-test.rpm");
+    await seedUploadFixture(dir, "latest", "app", "linux", "amd64", "rpm", "simtx-test.rpm");
     const ctx = signedCtx(dir);
-    ctx.setFetchImpl(() => Promise.resolve(runsResponse([run])));
     const repomd = await ctx.app.handle(req("/rpmrepo/repodata/repomd.xml"));
     assertEquals(repomd.status, 200);
     const repomdText = await repomd.text();
@@ -191,23 +180,13 @@ Deno.test("rpm: rebuild with same filename+length refreshes repodata checksum", 
       await sha256Hex(orig),
     );
 
-    const run1 = makeRun({ id: 9301 });
-    const run2 = makeRun({ id: 9302 });
-    let current = run1;
-    await Deno.mkdir(`${dir}/9301`, { recursive: true });
-    await Deno.writeFile(`${dir}/9301/simtx-test.rpm`, orig);
-    await Deno.mkdir(`${dir}/9302`, { recursive: true });
-    await Deno.writeFile(`${dir}/9302/simtx-test.rpm`, rebuilt);
+    await seedUpload(dir, "latest", "app", "linux", "amd64", "rpm", "simtx-test.rpm", orig);
 
     const ctx = testCtx(dir, {
       signingKey: Deno.readTextFileSync(
         new URL("./test-signing-key.asc", import.meta.url),
       ),
       signingKeyFpr: TEST_FPR,
-      // No run-cache TTL so the second half resolves the new run while
-      // the repodata cache persists — the stale-key scenario.
-      latestTtlMs: 0,
-      fetchImpl: () => Promise.resolve(runsResponse([current])),
     });
 
     const poolName = "simtx-test-1.0-2.x86_64.rpm";
@@ -220,7 +199,7 @@ Deno.test("rpm: rebuild with same filename+length refreshes repodata checksum", 
     );
     assertStringIncludes(text1, await sha256Hex(orig));
 
-    current = run2;
+    await seedUpload(dir, "latest", "app", "linux", "amd64", "rpm", "simtx-test.rpm", rebuilt);
     const pool2 = await ctx.app.handle(req(`/rpmrepo/${poolName}`));
     assertEquals(pool2.status, 200);
     const pool2Hash = await sha256Hex(

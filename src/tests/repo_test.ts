@@ -17,7 +17,7 @@ import {
 import { md5Hex } from "../repo-util.ts";
 import { listTar, writeTar } from "../repo-tar.ts";
 import { clearSign, detachSign, loadSigningKey } from "../repo-sign.ts";
-import { makeRun, req, runsResponse, testCtx } from "./util.ts";
+import { req, seedUploadFixture, testCtx } from "./util.ts";
 
 const TEST_FPR = "A5202902915B1536B896B54F864161347A1E7943";
 const FIX = new URL("./fixtures/", import.meta.url);
@@ -34,14 +34,6 @@ function signedCtx(dir: string, fpr = TEST_FPR) {
     ),
     signingKeyFpr: fpr,
   });
-}
-
-async function seedRun(dir: string, runId: number, ...files: string[]) {
-  await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
-  for (const f of files) {
-    await Deno.copyFile(new URL(f, FIX), `${dir}/${runId}/${f.split("/").pop()!}`);
-  }
-  return makeRun({ id: runId });
 }
 
 // --- pure builders ------------------------------------------------------------
@@ -175,9 +167,7 @@ Deno.test("repo: sign roundtrip with test key, wrong fpr rejected", async () => 
 Deno.test("repo: unsigned server answers 503 on metadata, packages still 404/200", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const ctx = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(runsResponse([])),
-    });
+    const ctx = testCtx(dir);
     for (const path of [
       "/arch/x86_64/simtx.db",
       "/arch/x86_64/simtx.db.tar.gz.sig",
@@ -197,9 +187,8 @@ Deno.test("repo: unsigned server answers 503 on metadata, packages still 404/200
 Deno.test("repo: arch db routes serve signed db from fixture", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const run = await seedRun(dir, 9101, "simtx-test-0.1.0alpha5-1-x86_64.pkg.tar.zst");
+    await seedUploadFixture(dir, "latest", "app", "linux", "amd64", "pkg.zst", "simtx-test-0.1.0alpha5-1-x86_64.pkg.tar.zst");
     const ctx = signedCtx(dir);
-    ctx.setFetchImpl(() => Promise.resolve(runsResponse([run])));
     for (const path of ["/arch/x86_64/simtx.db", "/arch/x86_64/simtx.db.tar.gz"]) {
       const res = await ctx.app.handle(req(path));
       assertEquals(res.status, 200, path);
@@ -219,9 +208,8 @@ Deno.test("repo: arch db routes serve signed db from fixture", async () => {
 Deno.test("repo: apt routes serve signed Release + Packages from fixture", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const run = await seedRun(dir, 9102, "simtx-test.deb");
+    await seedUploadFixture(dir, "latest", "app", "linux", "amd64", "deb", "simtx-test.deb");
     const ctx = signedCtx(dir);
-    ctx.setFetchImpl(() => Promise.resolve(runsResponse([run])));
     const rel = await ctx.app.handle(req("/dists/stable/Release"));
     assertEquals(rel.status, 200);
     const relText = await rel.text();
@@ -248,9 +236,8 @@ Deno.test("repo: apt routes serve signed Release + Packages from fixture", async
 Deno.test("repo: pool serves deb under conventional filename", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const run = await seedRun(dir, 9103, "simtx-test.deb");
+    await seedUploadFixture(dir, "latest", "app", "linux", "amd64", "deb", "simtx-test.deb");
     const ctx = signedCtx(dir);
-    ctx.setFetchImpl(() => Promise.resolve(runsResponse([run])));
     const good = await ctx.app.handle(req("/pool/main/simtx-test_0.1.0~alpha5-1_amd64.deb"));
     assertEquals(good.status, 200);
     assertEquals(good.headers.get("content-type"), "application/octet-stream");

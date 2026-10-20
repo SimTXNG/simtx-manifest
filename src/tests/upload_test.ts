@@ -1,7 +1,7 @@
 import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { parseUploadBody, parseUploadFilename } from "../uploads.ts";
 import { HttpError } from "../validation.ts";
-import { makeRun, req, runsResponse, testCtx } from "./util.ts";
+import { req, testCtx } from "./util.ts";
 
 async function withTempDir(fn: (dir: string) => Promise<void>) {
   const dir = await Deno.makeTempDir();
@@ -104,10 +104,7 @@ Deno.test("uploads: 422 on bad target, bad filename, empty body", async () => {
 
 Deno.test("uploads: PUT then GET serves bytes + HEAD + range", async () => {
   await withTempDir(async (dir) => {
-    const ctx = testCtx(dir, {
-      uploadToken: "secret",
-      fetchImpl: () => Promise.resolve(runsResponse([makeRun()])),
-    });
+    const ctx = testCtx(dir, { uploadToken: "secret" });
     const body = new TextEncoder().encode("debian-package-bytes");
     const up = await ctx.app.handle(
       put(
@@ -140,14 +137,12 @@ Deno.test("uploads: PUT then GET serves bytes + HEAD + range", async () => {
   });
 });
 
-Deno.test("uploads: shadow GitHub artifact + appear in /api/targets", async () => {
+Deno.test("uploads: serve uploaded file + appear in /api/targets", async () => {
   await withTempDir(async (dir) => {
     const ctx = testCtx(dir, {
       uploadToken: "secret",
       versionReturn: "9.9.9",
-      fetchImpl: () => Promise.resolve(runsResponse([])),
     });
-    // No GitHub runs at all: without upload this would 404.
     const before = await ctx.app.handle(req("/latest/app/linux/amd64/deb"));
     assertEquals(before.status, 404);
 
@@ -174,10 +169,7 @@ Deno.test("uploads: shadow GitHub artifact + appear in /api/targets", async () =
 
 Deno.test("uploads: DELETE removes file, second DELETE 404s", async () => {
   await withTempDir(async (dir) => {
-    const ctx = testCtx(dir, {
-      uploadToken: "secret",
-      fetchImpl: () => Promise.resolve(runsResponse([])),
-    });
+    const ctx = testCtx(dir, { uploadToken: "secret" });
     await ctx.app.handle(
       put("/upload/latest/cli/linux/amd64/binary", "cli-bytes", "secret"),
     );

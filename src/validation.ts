@@ -109,24 +109,11 @@ export const DownloadParamsSchema = z.object({
 export type DownloadParams = z.infer<typeof DownloadParamsSchema>;
 
 export const EnvSchema = z.object({
-  GITHUB_TOKEN: z.string({ error: "GITHUB_TOKEN is required" }).min(
-    1,
-    "GITHUB_TOKEN is required",
-  ),
-  GITHUB_REPO: z.string().default("simtxng/transmitter-go"),
   HOST: z.string().default("0.0.0.0"),
   PORT: z.coerce.number().int().positive().default(8000),
   CACHE_DIR: z.string().min(1).default("./cache"),
-  LATEST_TTL: z.coerce.number().nonnegative().default(60),
   TAG_TTL: z.coerce.number().nonnegative().default(300),
   TARGETS_TTL: z.coerce.number().nonnegative().default(300),
-  PREFETCH: z.string().default("1").transform((v) => v !== "0"),
-  REFRESH_INTERVAL: z.coerce.number().nonnegative().default(300),
-  CACHE_MAX_RUNS: z.coerce.number().int().nonnegative().default(10),
-  LINUX_WORKFLOW: z.string().min(1).default("build-linux.yml"),
-  WINDOWS_WORKFLOW: z.string().min(1).default("build-windows.yml"),
-  MACOS_WORKFLOW: z.string().min(1).default("build-macos.yml"),
-  LATEST_REF: z.string().optional(),
   VERSION_RETURN: z.string().optional(),
   SIGNING_KEY_FILE: z.string().optional(),
   XBPS_SIGNING_KEY_FILE: z.string().optional(),
@@ -138,19 +125,9 @@ export const EnvSchema = z.object({
 export type Env = z.infer<typeof EnvSchema>;
 
 export const AppOptionsSchema = z.object({
-  repo: z.string().min(1),
-  token: z.string().min(1),
-  workflows: z.object({
-    linux: z.string().min(1),
-    windows: z.string().min(1),
-    macos: z.string().min(1),
-  }),
   cacheDir: z.string().min(1),
-  latestTtlMs: z.number().finite().nonnegative(),
   tagTtlMs: z.number().finite().nonnegative(),
   targetsTtlMs: z.number().finite().nonnegative(),
-  cacheMaxRuns: z.number().int().nonnegative(),
-  latestRef: z.string().optional(),
   versionReturn: z.string().optional(),
   signingKey: z.string().optional(),
   xbpsSigningKey: z.string().optional(),
@@ -160,34 +137,6 @@ export const AppOptionsSchema = z.object({
   uploadMaxBytes: z.number().finite().positive().optional(),
 });
 export type AppOptions = z.infer<typeof AppOptionsSchema>;
-
-export const RunSchema = z.object({
-  id: z.number(),
-  head_branch: z.string(),
-  head_sha: z.string(),
-  run_number: z.number(),
-  display_title: z.string(),
-  name: z.string(),
-  html_url: z.string(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
-export type Run = z.infer<typeof RunSchema>;
-
-export const RunListSchema = z.object({
-  workflow_runs: z.array(RunSchema),
-});
-export type RunList = z.infer<typeof RunListSchema>;
-
-export const TagsSchema = z.array(z.object({ name: z.string() }));
-export type Tags = z.infer<typeof TagsSchema>;
-
-export const ArtifactsSchema = z.object({
-  artifacts: z.array(
-    z.object({ id: z.number(), expired: z.boolean() }),
-  ),
-});
-export type Artifacts = z.infer<typeof ArtifactsSchema>;
 
 export const TargetDefSchema = z.object({
   product: z.enum(["app", "cli"]),

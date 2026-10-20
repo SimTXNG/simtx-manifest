@@ -1,6 +1,4 @@
 import { Elysia } from "elysia";
-import type { z } from "zod";
-import { unzipSync } from "fflate";
 import { archPackageForBytes, buildArchDb } from "./repo-arch.ts";
 import {
   buildFilelistsXml,
@@ -37,39 +35,20 @@ import {
 } from "./uploads.ts";
 import {
   AppOptionsSchema,
-  ArtifactsSchema,
   DownloadParamsSchema,
   HttpError,
   parseOr422,
   RefSchema,
-  RunListSchema,
-  TagsSchema,
   TargetDefSchema,
 } from "./validation.ts";
 import type {
   AppOptions as ValidatedOptions,
   Os,
-  Run,
-  RunList,
   TargetDef,
 } from "./validation.ts";
 
 export { HttpError };
-export type { Run, RunList, TargetDef };
-export const WANTED_EXTS = [
-  ".deb",
-  ".appimage",
-  ".appimage.zsync",
-  ".appimage.sha256",
-  ".sha256",
-  ".pkg.tar.zst.sig",
-  ".sig",
-  ".exe",
-  ".rpm",
-  ".xbps",
-  ".pkg.tar.zst",
-  ".dmg",
-];
+export type { TargetDef };
 export const CLI_UNIX_NAMES = ["simtx-cli"];
 export const CLI_WINDOWS_NAMES = ["simtx-cli.exe"];
 
@@ -144,21 +123,6 @@ export const json = (data: unknown, status = 200) =>
     },
   });
 
-export function runInfo(run: Run | null) {
-  if (!run) return null;
-  return {
-    id: run.id,
-    branch: run.head_branch,
-    sha: run.head_sha?.slice(0, 7) ?? null,
-    full_sha: run.head_sha ?? null,
-    run_number: run.run_number,
-    title: run.display_title || run.name,
-    url: run.html_url,
-    created_at: run.created_at,
-    built_at: run.updated_at,
-  };
-}
-
 export const TARGET_DEFS: TargetDef[] = TargetDefSchema.array().parse([
   { product: "app", os: "linux", arch: "amd64", kind: "deb" },
   { product: "app", os: "linux", arch: "amd64", kind: "rpm" },
@@ -175,43 +139,15 @@ export const TARGET_DEFS: TargetDef[] = TargetDefSchema.array().parse([
   { product: "cli", os: "macos", arch: "arm64", kind: "binary" },
 ]);
 
-export function collect(
-  zip: Uint8Array,
-  out: Record<string, Uint8Array> = {},
-  depth = 0,
-) {
-  const entries = unzipSync(zip, {
-    filter: (f) => {
-      const n = f.name.toLowerCase();
-      return (
-        n.endsWith(".zip") ||
-        WANTED_EXTS.some((e) => n.endsWith(e)) ||
-        isCliUnix(n.split("/").pop() ?? "")
-      );
-    },
-  });
-  for (const [path, data] of Object.entries(entries)) {
-    const name = path.split("/").pop();
-    if (!name) continue;
-    if (name.toLowerCase().endsWith(".zip")) {
-      if (depth < 2) collect(data, out, depth + 1);
-    } else {
-      out[name] = data;
-    }
-  }
-  return out;
-}
-
 export type AppOptions = ValidatedOptions & {
   indexFileUrl?: URL | string;
-  fetchImpl?: typeof fetch;
   // Test-only override for the expected signing fingerprint (the schema
   // strips it, so it is read from opts, never from validated config).
   signingKeyFpr?: string;
 };
 
 // Direct-upload store + handlers live in ./uploads.ts (Zod-validated).
-// Uploads shadow GitHub artifacts on every read path when present.
+// Uploaded files are the sole artifact source on every read path.
 
 // Repo hosting (APT + Arch) signs metadata with the package-signing key.
 // Unsigned mode serves packages but answers 503 on all repo-metadata
@@ -220,15 +156,9 @@ const REPO_TTL_MS = 60_000;
 
 export function createApp(opts: AppOptions) {
   const cfg = parseOr422(AppOptionsSchema, opts);
-  const REPO = cfg.repo;
-  const TOKEN = cfg.token;
-  const WORKFLOWS = cfg.workflows;
   const CACHE_DIR = cfg.cacheDir;
-  const LATEST_TTL = cfg.latestTtlMs;
   const TAG_TTL = cfg.tagTtlMs;
   const TARGETS_TTL = cfg.targetsTtlMs;
-  const CACHE_MAX_RUNS = cfg.cacheMaxRuns;
-  const LATEST_REF = cfg.latestRef;
   const VERSION_RETURN = cfg.versionReturn?.trim() || undefined;
   const UPLOAD_TOKEN = cfg.uploadToken?.trim() || undefined;
   const UPLOAD_MAX_BYTES = cfg.uploadMaxBytes ?? 524_288_000;
@@ -239,40 +169,9 @@ export function createApp(opts: AppOptions) {
   const INDEX_URL =
     opts.indexFileUrl ?? new URL("./static/index.html", import.meta.url);
 
-  let fetchFn: typeof fetch = opts.fetchImpl ?? fetch;
-  const runCache = new Map<string, { run: Run | null; expires: number }>();
   const targetsCache = new Map<string, { data: unknown; expires: number }>();
-  const inflight = new Map<number, Promise<string>>();
   let cachedIndex: Uint8Array | null = null;
   let cachedVersion: { value: string; expires: number } | null = null;
-
-  const gh = (path: string, init: RequestInit = {}) =>
-    fetchFn(`https://api.github.com/repos/${REPO}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${TOKEN}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "simtx-manifest",
-        ...init.headers,
-      },
-    });
-
-  async function ghJson<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-    const res = await gh(path);
-    if (!res.ok) {
-      await res.body?.cancel();
-      throw new HttpError(502, `GitHub API returned ${res.status} for ${path}`);
-    }
-    const parsed = schema.safeParse(await res.json());
-    if (!parsed.success) {
-      throw new HttpError(
-        502,
-        `GitHub API returned malformed data for ${path}`,
-      );
-    }
-    return parsed.data;
-  }
 
   // Upload wiring: ./uploads.ts owns the store + handlers (Zod-validated);
   // app-side caches are invalidated through onMutated.
@@ -315,32 +214,60 @@ export function createApp(opts: AppOptions) {
     file: string,
   ) => `${uploadTargetDir(CACHE_DIR, ref, product, os, arch, kind)}/${file}`;
 
-  async function latestTagVersion(): Promise<string> {
+  async function newestFileMtime(dir: string): Promise<number | null> {
+    let newest: number | null = null;
+    for await (const entry of Deno.readDir(dir)) {
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory) {
+        const mtime = await newestFileMtime(path);
+        if (mtime !== null && (newest === null || mtime > newest)) {
+          newest = mtime;
+        }
+      } else if (entry.isFile) {
+        const mtime = (await Deno.stat(path)).mtime?.getTime() ?? null;
+        if (mtime !== null && (newest === null || mtime > newest)) {
+          newest = mtime;
+        }
+      }
+    }
+    return newest;
+  }
+
+  async function latestUploadedVersion(): Promise<string> {
     if (cachedVersion && cachedVersion.expires > Date.now()) {
       return cachedVersion.value;
     }
-    let tags;
+    const uploadsDir = `${CACHE_DIR}/uploads`;
+    let newest: { ref: string; mtime: number } | null = null;
     try {
-      tags = await ghJson(`/tags?per_page=100`, TagsSchema);
+      for await (const entry of Deno.readDir(uploadsDir)) {
+        if (!entry.isDirectory) continue;
+        if (entry.name === "latest" || !/^[vV]?\d/.test(entry.name)) continue;
+        const mtime = await newestFileMtime(`${uploadsDir}/${entry.name}`);
+        if (mtime === null) continue;
+        if (
+          !newest ||
+          mtime > newest.mtime ||
+          (mtime === newest.mtime &&
+            entry.name.localeCompare(newest.ref) > 0)
+        ) {
+          newest = { ref: entry.name, mtime };
+        }
+      }
     } catch (e) {
-      if (e instanceof HttpError && e.status === 503) throw e;
+      if (!(e instanceof Deno.errors.NotFound)) throw e;
+    }
+    if (!newest) {
       throw new HttpError(
         503,
-        `VERSION_RETURN is not configured and tag lookup failed: ${(e as Error).message}`,
+        "VERSION_RETURN is not configured and no uploaded tags found",
       );
     }
-    const name = tags[0]?.name?.trim();
-    if (!name) {
-      throw new HttpError(
-        503,
-        "VERSION_RETURN is not configured and no tags found",
-      );
-    }
-    const value = stripLeadingV(name);
+    const value = stripLeadingV(newest.ref);
     if (!value) {
       throw new HttpError(
         503,
-        "VERSION_RETURN is not configured and no tags found",
+        "VERSION_RETURN is not configured and no uploaded tags found",
       );
     }
     cachedVersion = { value, expires: Date.now() + TAG_TTL };
@@ -349,26 +276,51 @@ export function createApp(opts: AppOptions) {
 
   function resolveVersion(): Promise<string> {
     if (VERSION_RETURN) return Promise.resolve(VERSION_RETURN);
-    return latestTagVersion();
+    return latestUploadedVersion();
+  }
+
+  async function latestPlatformStatus(os: Os) {
+    let newest: number | null = null;
+    for (const t of TARGET_DEFS.filter((t) => t.os === os)) {
+      const file = await findUpload(
+        "latest",
+        t.product,
+        t.os,
+        t.arch,
+        t.kind,
+      );
+      if (!file) continue;
+      try {
+        const { mtime } = await Deno.stat(
+          uploadPath("latest", t.product, t.os, t.arch, t.kind, file),
+        );
+        const ms = mtime?.getTime() ?? null;
+        if (ms !== null && (newest === null || ms > newest)) newest = ms;
+      } catch {
+        /* ignore vanished upload */
+      }
+    }
+    if (newest === null) return null;
+    return {
+      branch: "latest",
+      built_at: new Date(newest).toISOString(),
+    };
   }
 
   async function latestStatus() {
-    const [linuxRun, windowsRun, macosRun, version] = await Promise.all([
-      resolveRun(WORKFLOWS.linux, "latest"),
-      resolveRun(WORKFLOWS.windows, "latest"),
-      resolveRun(WORKFLOWS.macos, "latest"),
+    const [version, linux, windows, macos] = await Promise.all([
       resolveVersion(),
+      latestPlatformStatus("linux"),
+      latestPlatformStatus("windows"),
+      latestPlatformStatus("macos"),
     ]);
-    const linux = runInfo(linuxRun);
-    const windows = runInfo(windowsRun);
-    const macos = runInfo(macosRun);
     const times = [linux?.built_at, windows?.built_at, macos?.built_at].filter(
       Boolean,
     ) as string[];
     const newest = times.sort().at(-1) ?? null;
     return {
       version,
-      repo: REPO,
+      ref: "latest",
       newest_built_at: newest,
       linux,
       windows,
@@ -377,79 +329,43 @@ export function createApp(opts: AppOptions) {
   }
 
   async function buildTargets(ref: string) {
-    const oss = Object.keys(WORKFLOWS) as Os[];
-    const [version, runs] = await Promise.all([
-      resolveVersion(),
-      Promise.all(
-        oss.map(async (os) => ({
-          os,
-          run: await resolveRun(WORKFLOWS[os], ref),
-        })),
-      ),
-    ]);
+    const version = await resolveVersion();
     const targets = await Promise.all(
       TARGET_DEFS.map(async (t) => {
         const base = {
           ...t,
           url: `/${ref}/${t.product}/${t.os}/${t.arch}/${t.kind}`,
         };
-        // Uploads shadow GitHub artifacts.
-        const upFile = await findUpload(ref, t.product, t.os, t.arch, t.kind);
-        if (upFile) {
-          try {
-            const { size } = await Deno.stat(
-              uploadPath(ref, t.product, t.os, t.arch, t.kind, upFile),
-            );
-            return {
-              ...base,
-              available: true,
-              file: upFile,
-              size,
-              reason: null,
-            };
-          } catch {
-            /* fall through to GitHub */
-          }
-        }
-        const run = runs.find((r) => r.os === t.os)?.run ?? null;
-        if (!run) {
-          return {
-            ...base,
-            available: false,
-            file: null,
-            size: null,
-            reason: "no successful build",
-          };
-        }
-        const names: string[] = [];
-        try {
-          const dir = await ensureExtracted(run.id);
-          for await (const entry of Deno.readDir(dir)) {
-            if (entry.isFile) names.push(entry.name);
-          }
-        } catch (e) {
-          return {
-            ...base,
-            available: false,
-            file: null,
-            size: null,
-            reason: (e as Error).message,
-          };
-        }
-        const file = names
-          .filter((n) => matchesTarget(t.product, t.os, t.kind, n))
-          .sort((a, b) => a.localeCompare(b))[0];
+        const file = await findUpload(
+          ref,
+          t.product,
+          t.os,
+          t.arch,
+          t.kind,
+        );
         if (!file) {
           return {
             ...base,
             available: false,
             file: null,
             size: null,
-            reason: "file missing from artifact",
+            reason: "not uploaded",
           };
         }
-        const { size } = await Deno.stat(`${CACHE_DIR}/${run.id}/${file}`);
-        return { ...base, available: true, file, size, reason: null };
+        try {
+          const { size } = await Deno.stat(
+            uploadPath(ref, t.product, t.os, t.arch, t.kind, file),
+          );
+          return { ...base, available: true, file, size, reason: null };
+        } catch {
+          return {
+            ...base,
+            available: false,
+            file: null,
+            size: null,
+            reason: "not uploaded",
+          };
+        }
       }),
     );
     return {
@@ -521,134 +437,6 @@ export function createApp(opts: AppOptions) {
     });
   }
 
-  async function findRun(workflow: string, ref: string): Promise<Run | null> {
-    const wf = encodeURIComponent(workflow);
-    const branch = ref === "latest" ? LATEST_REF : ref;
-
-    const filter = branch ? `&branch=${encodeURIComponent(branch)}` : "";
-    const { workflow_runs } = await ghJson(
-      `/actions/workflows/${wf}/runs?status=success&per_page=1${filter}`,
-      RunListSchema,
-    );
-    return workflow_runs[0] ?? null;
-  }
-
-  async function resolveRun(
-    workflow: string,
-    ref: string,
-  ): Promise<Run | null> {
-    const key = `${workflow}@${ref}`;
-    const hit = runCache.get(key);
-    if (hit && hit.expires > Date.now()) return hit.run;
-    const run = await findRun(workflow, ref);
-    runCache.set(key, {
-      run,
-      expires: Date.now() + (ref === "latest" ? LATEST_TTL : TAG_TTL),
-    });
-    return run;
-  }
-
-  async function downloadArtifact(id: number): Promise<Uint8Array> {
-    let res = await gh(`/actions/artifacts/${id}/zip`, { redirect: "manual" });
-    const location = res.headers.get("location");
-    if (res.status >= 300 && res.status < 400 && location) {
-      await res.body?.cancel();
-      res = await fetchFn(location);
-    }
-    if (!res.ok) {
-      await res.body?.cancel();
-      throw new HttpError(502, `Artifact download failed (${res.status})`);
-    }
-    return new Uint8Array(await res.arrayBuffer());
-  }
-
-  function ensureExtracted(runId: number): Promise<string> {
-    let p = inflight.get(runId);
-    if (!p) {
-      p = extract(runId).finally(() => inflight.delete(runId));
-      inflight.set(runId, p);
-    }
-    return p;
-  }
-
-  async function extract(runId: number): Promise<string> {
-    const dir = `${CACHE_DIR}/${runId}`;
-    const cached = await Deno.stat(dir)
-      .then(() => true)
-      .catch(() => false);
-    if (cached) return dir;
-
-    const { artifacts } = await ghJson(
-      `/actions/runs/${runId}/artifacts`,
-      ArtifactsSchema,
-    );
-    const artifact = artifacts.find((a) => !a.expired);
-    if (!artifact) {
-      throw new HttpError(410, "Artifact expired or missing for this build");
-    }
-
-    const files = collect(await downloadArtifact(artifact.id));
-    if (Object.keys(files).length === 0) {
-      throw new HttpError(
-        502,
-        "Artifact contained no .deb/.rpm/.xbps/.pkg.tar.zst/.AppImage/.exe/simtx-cli files",
-      );
-    }
-
-    const partial = `${dir}.partial`;
-    await Deno.remove(partial, { recursive: true }).catch(() => {});
-    await Deno.mkdir(partial, { recursive: true });
-    for (const [name, data] of Object.entries(files)) {
-      await Deno.writeFile(`${partial}/${name}`, data);
-    }
-    await Deno.rename(partial, dir);
-    return dir;
-  }
-
-  async function prefetchLatest(reason: string): Promise<void> {
-    const jobs = Object.entries(WORKFLOWS).map(async ([os, workflow]) => {
-      try {
-        const run = await resolveRun(workflow, "latest");
-        if (!run) {
-          console.log(`[prefetch:${reason}] no successful ${os} build found`);
-          return;
-        }
-        await ensureExtracted(run.id);
-        console.log(`[prefetch:${reason}] warmed ${os} run ${run.id}`);
-      } catch (e) {
-        console.error(
-          `[prefetch:${reason}] ${os} failed:`,
-          (e as Error).message,
-        );
-      }
-    });
-    await Promise.all(jobs);
-    if (CACHE_MAX_RUNS > 0) {
-      try {
-        await pruneCache();
-      } catch (e) {
-        console.error("[prune] failed:", (e as Error).message);
-      }
-    }
-  }
-
-  async function pruneCache(): Promise<void> {
-    if (CACHE_MAX_RUNS <= 0) return;
-    const entries: { name: string; mtime: number }[] = [];
-    for await (const entry of Deno.readDir(CACHE_DIR)) {
-      if (!entry.isDirectory || entry.name.endsWith(".partial")) continue;
-      if (!/^\d+$/.test(entry.name)) continue;
-      const mtime =
-        (await Deno.stat(`${CACHE_DIR}/${entry.name}`)).mtime?.getTime() ?? 0;
-      entries.push({ name: entry.name, mtime });
-    }
-    entries.sort((a, b) => b.mtime - a.mtime);
-    for (const stale of entries.slice(CACHE_MAX_RUNS)) {
-      await Deno.remove(`${CACHE_DIR}/${stale.name}`, { recursive: true });
-      console.log(`[prune] removed cached run ${stale.name}`);
-    }
-  }
-
   function parseRange(
     header: string | null,
     size: number,
@@ -680,95 +468,56 @@ export function createApp(opts: AppOptions) {
   }
 
   async function latestUpdateInfo() {
-    const version = await resolveVersion();
-    // Uploads shadow GitHub artifacts for the rolling "latest" AppImage feed.
-    const upAppimage = await findUpload(
-      "latest",
-      "app",
-      "linux",
-      "amd64",
-      "appimage",
-    );
-    const upZsync = await findUpload(
+    const [version, appimage] = await Promise.all([
+      resolveVersion(),
+      findUpload("latest", "app", "linux", "amd64", "appimage"),
+    ]);
+    if (!appimage) {
+      throw new HttpError(404, 'No AppImage uploaded for "latest"');
+    }
+    const zsync = await findUpload(
       "latest",
       "app",
       "linux",
       "amd64",
       "appimage-zsync",
     );
-    const upShaFile = await findUpload(
+    const shaFile = await findUpload(
       "latest",
       "app",
       "linux",
       "amd64",
       "appimage-sha256",
     );
-    if (upAppimage) {
-      const shaDir = uploadTargetDir(
-        CACHE_DIR,
-        "latest",
-        "app",
-        "linux",
-        "amd64",
-        "appimage-sha256",
-      );
-      let sha256: string | null = null;
-      if (upShaFile) {
-        try {
-          const raw = (
-            await Deno.readTextFile(`${shaDir}/${upShaFile}`)
-          ).trim().split(/\s+/)[0] ?? "";
-          sha256 = /^[0-9a-fA-F]{64}$/.test(raw) ? raw.toLowerCase() : null;
-        } catch {
-          /* ignore */
-        }
-      }
-      const url = (kind: string) => `/latest/app/linux/amd64/${kind}`;
-      return {
-        version,
-        ref: "latest",
-        built_at: null,
-        appimage: upAppimage,
-        appimage_url: url("appimage"),
-        zsync: upZsync,
-        zsync_url: upZsync ? url("appimage-zsync") : null,
-        sha256_file: upShaFile,
-        sha256_url: upShaFile ? url("appimage-sha256") : null,
-        sha256,
-      };
-    }
-    const run = await resolveRun(WORKFLOWS.linux, "latest");
-    if (!run) throw new HttpError(404, "No successful linux build found");
-    const dir = await ensureExtracted(run.id);
-    const names: string[] = [];
-    for await (const entry of Deno.readDir(dir)) {
-      if (entry.isFile) names.push(entry.name);
-    }
-    names.sort((a, b) => a.localeCompare(b));
-    const appimage =
-      names.find((n) => matchesTarget("app", "linux", "appimage", n)) ?? null;
-    const zsync =
-      names.find((n) => matchesTarget("app", "linux", "appimage-zsync", n)) ??
-      null;
-    const shaFile =
-      names.find((n) => matchesTarget("app", "linux", "appimage-sha256", n)) ??
-      null;
     let sha256: string | null = null;
     if (shaFile) {
-      const raw =
-        (await Deno.readTextFile(`${dir}/${shaFile}`)).trim().split(/\s+/)[0] ??
-        "";
-      sha256 = /^[0-9a-fA-F]{64}$/.test(raw) ? raw.toLowerCase() : null;
+      try {
+        const shaPath = uploadPath(
+          "latest",
+          "app",
+          "linux",
+          "amd64",
+          "appimage-sha256",
+          shaFile,
+        );
+        const raw = (await Deno.readTextFile(shaPath)).trim().split(/\s+/)[0] ??
+          "";
+        sha256 = /^[0-9a-fA-F]{64}$/.test(raw) ? raw.toLowerCase() : null;
+      } catch {
+        /* ignore */
+      }
     }
-    const ref = run.head_branch;
-    const url = (kind: string) => `/${ref}/app/linux/amd64/${kind}`;
+    const { mtime } = await Deno.stat(
+      uploadPath("latest", "app", "linux", "amd64", "appimage", appimage),
+    );
+    const url = (kind: string) => `/latest/app/linux/amd64/${kind}`;
     return {
       version,
-      ref,
-      built_at: run.updated_at,
-      appimage: appimage,
-      appimage_url: appimage ? url("appimage") : null,
-      zsync: zsync,
+      ref: "latest",
+      built_at: mtime?.toISOString() ?? null,
+      appimage,
+      appimage_url: url("appimage"),
+      zsync,
       zsync_url: zsync ? url("appimage-zsync") : null,
       sha256_file: shaFile,
       sha256_url: shaFile ? url("appimage-sha256") : null,
@@ -792,86 +541,27 @@ export function createApp(opts: AppOptions) {
       arch: archRaw,
       kind: kindRaw,
     });
-    // Uploads shadow GitHub artifacts.
-    const upFile = await findUpload(ref, product, os, arch, kind);
-    if (upFile) {
-      const upPath = uploadPath(ref, product, os, arch, kind, upFile);
-      const upSize = (await Deno.stat(upPath)).size;
-      const upCacheControl =
-        ref === "latest" ? "no-cache" : "public, max-age=31536000, immutable";
-      const upHeaders = {
-        "Content-Type": "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${upFile}"`,
-        "X-Release-Ref": ref,
-        "Cache-Control": upCacheControl,
-        "Accept-Ranges": "bytes",
-      };
-      if (isHead) {
-        return new Response(null, {
-          headers: { ...upHeaders, "Content-Length": String(upSize) },
-        });
-      }
-      const upRange = parseRange(rangeHeader, upSize);
-      if (upRange === "invalid") {
-        return new Response("Range not satisfiable\n", {
-          status: 416,
-          headers: {
-            ...upHeaders,
-            "Content-Range": `bytes */${upSize}`,
-            "content-type": "text/plain; charset=utf-8",
-          },
-        });
-      }
-      if (upRange) {
-        const len = upRange.end - upRange.start + 1;
-        const data = (await Deno.readFile(upPath)).slice(upRange.start, upRange.end + 1);
-        return new Response(data, {
-          status: 206,
-          headers: {
-            ...upHeaders,
-            "Content-Length": String(len),
-            "Content-Range": `bytes ${upRange.start}-${upRange.end}/${upSize}`,
-          },
-        });
-      }
-      const upHeadersFull = new Headers({ ...upHeaders, "Content-Length": String(upSize) });
-      return new Response((await Deno.open(upPath)).readable, { headers: upHeadersFull });
-    }
-    const workflow = WORKFLOWS[os];
-
-    const run = await resolveRun(workflow, ref);
-    if (!run) {
-      throw new HttpError(404, `No successful ${os} build found for "${ref}"`);
-    }
-
-    const dir = await ensureExtracted(run.id);
-    const names: string[] = [];
-    for await (const entry of Deno.readDir(dir)) {
-      if (entry.isFile) names.push(entry.name);
-    }
-    names.sort((a, b) => a.localeCompare(b));
-    const file = names.find((n) => matchesTarget(product, os, kind, n));
+    const file = await findUpload(ref, product, os, arch, kind);
     if (!file) {
       throw new HttpError(
         404,
-        `No ${kind} (${product}/${os}) in the ${ref} artifact`,
+        `No ${kind} (${product}/${os}) uploaded for "${ref}"`,
       );
     }
-
-    const path = `${dir}/${file}`;
+    const path = uploadPath(ref, product, os, arch, kind, file);
     const { size } = await Deno.stat(path);
     const cacheControl =
       ref === "latest" ? "no-cache" : "public, max-age=31536000, immutable";
-    const baseHeaders = {
+    const headers = {
       "Content-Type": "application/octet-stream",
       "Content-Disposition": `attachment; filename="${file}"`,
-      "X-Release-Ref": run.head_branch,
+      "X-Release-Ref": ref,
       "Cache-Control": cacheControl,
       "Accept-Ranges": "bytes",
     };
     if (isHead) {
       return new Response(null, {
-        headers: { ...baseHeaders, "Content-Length": String(size) },
+        headers: { ...headers, "Content-Length": String(size) },
       });
     }
     const range = parseRange(rangeHeader, size);
@@ -879,7 +569,7 @@ export function createApp(opts: AppOptions) {
       return new Response("Range not satisfiable\n", {
         status: 416,
         headers: {
-          ...baseHeaders,
+          ...headers,
           "Content-Range": `bytes */${size}`,
           "content-type": "text/plain; charset=utf-8",
         },
@@ -894,17 +584,15 @@ export function createApp(opts: AppOptions) {
       return new Response(data, {
         status: 206,
         headers: {
-          ...baseHeaders,
+          ...headers,
           "Content-Length": String(len),
           "Content-Range": `bytes ${range.start}-${range.end}/${size}`,
         },
       });
     }
-    const headers = new Headers({
-      ...baseHeaders,
-      "Content-Length": String(size),
+    return new Response((await Deno.open(path)).readable, {
+      headers: { ...headers, "Content-Length": String(size) },
     });
-    return new Response((await Deno.open(path)).readable, { headers });
   }
 
   async function handleTargets(refRaw: string): Promise<Response> {
@@ -1079,7 +767,7 @@ export function createApp(opts: AppOptions) {
       "Content-Type": "application/octet-stream",
       "Content-Length": String(pkg.data.length),
       "Content-Disposition": `attachment; filename="${filename}"`,
-      "X-Release-Ref": pkg.run.head_branch,
+      "X-Release-Ref": pkg.ref,
       "Cache-Control": "public, max-age=31536000, immutable",
       "Accept-Ranges": "bytes",
     };
@@ -1119,29 +807,14 @@ export function createApp(opts: AppOptions) {
     kind: string,
     arch: string = os === "macos" ? "arm64" : "amd64",
   ) {
-    // Uploads shadow GitHub artifacts.
     const up = await readUpload(ref, product, os, arch, kind);
-    if (up) {
-      return { run: { head_branch: ref } as Run, file: up.file, data: up.data };
-    }
-    const run = await resolveRun(WORKFLOWS[os], ref);
-    if (!run) {
-      throw new HttpError(404, `No successful ${os} build found for "${ref}"`);
-    }
-    const dir = await ensureExtracted(run.id);
-    const names: string[] = [];
-    for await (const entry of Deno.readDir(dir)) {
-      if (entry.isFile) names.push(entry.name);
-    }
-    names.sort((a, b) => a.localeCompare(b));
-    const file = names.find((n) => matchesTarget(product, os, kind, n));
-    if (!file) {
+    if (!up) {
       throw new HttpError(
         404,
-        `No ${kind} (${product}/${os}) in the ${ref} artifact`,
+        `No ${kind} (${product}/${os}) uploaded for "${ref}"`,
       );
     }
-    return { run, file, data: await Deno.readFile(`${dir}/${file}`) };
+    return { ref, file: up.file, data: up.data };
   }
 
   const noCache = { "Cache-Control": "no-cache" };
@@ -1278,7 +951,7 @@ export function createApp(opts: AppOptions) {
         : "application/octet-stream",
       "Content-Length": String(pkg.data.length),
       "Content-Disposition": `attachment; filename="${filename}"`,
-      "X-Release-Ref": pkg.run.head_branch,
+      "X-Release-Ref": pkg.ref,
       "Cache-Control": "public, max-age=31536000, immutable",
       "Accept-Ranges": "bytes",
     };
@@ -1343,7 +1016,7 @@ export function createApp(opts: AppOptions) {
     const key = await xbpsSignKey();
     const pkg = await readRunFile("linux", "latest", "app", "xbps");
     const hash = await sha256Hex(pkg.data);
-    const cacheKey = `${pkg.run.head_branch}:${pkg.file}:${hash}`;
+    const cacheKey = `${pkg.ref}:${pkg.file}:${hash}`;
     if (xbpsCache && xbpsCache.key === cacheKey) return xbpsCache.repo;
     const parsed = await parseXbpsPackage(pkg.data);
     const files = await buildXbpsRepo(parsed, pkg.data, key, XBPS_SIGNED_BY);
@@ -1352,7 +1025,7 @@ export function createApp(opts: AppOptions) {
       sig2: files.sig2,
       fileName: files.fileName,
       pkgBytes: pkg.data,
-      ref: pkg.run.head_branch,
+      ref: pkg.ref,
       fingerprint: files.fingerprint,
     };
     xbpsCache = { key: cacheKey, repo };
@@ -1561,7 +1234,7 @@ export function createApp(opts: AppOptions) {
       "Content-Type": "application/octet-stream",
       "Content-Length": String(deb.data.length),
       "Content-Disposition": `attachment; filename="${filename}"`,
-      "X-Release-Ref": deb.run.head_branch,
+      "X-Release-Ref": deb.ref,
       "Cache-Control": "public, max-age=31536000, immutable",
       "Accept-Ranges": "bytes",
     };
@@ -1735,21 +1408,11 @@ export function createApp(opts: AppOptions) {
     app,
     latestStatus,
     getTargets,
-    resolveRun,
     resolveVersion,
-    latestTagVersion,
+    latestUploadedVersion,
     serveDownload,
-    downloadArtifact,
-    ensureExtracted,
-    pruneCache,
-    prefetchLatest,
-    setFetchImpl(fn: typeof fetch) {
-      fetchFn = fn;
-    },
     clearCaches() {
-      runCache.clear();
       targetsCache.clear();
-      inflight.clear();
       cachedIndex = null;
       cachedVersion = null;
       rpmCache = null;

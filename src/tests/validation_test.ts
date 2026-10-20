@@ -8,12 +8,10 @@ import { z } from "zod";
 import { createApp } from "../app.ts";
 import {
   AppOptionsSchema,
-  ArtifactsSchema,
   DownloadParamsSchema,
   EnvSchema,
   HttpError,
   parseOr422,
-  RunListSchema,
   TargetDefSchema,
 } from "../validation.ts";
 import { TARGET_DEFS } from "../app.ts";
@@ -109,52 +107,34 @@ Deno.test("DownloadParamsSchema: rejects with 422 issue details", () => {
   }
 });
 
-Deno.test("EnvSchema: defaults, coercion, required token", () => {
-  const cfg = EnvSchema.parse({ GITHUB_TOKEN: "t" });
+Deno.test("EnvSchema: defaults, coercion, optional upload token", () => {
+  const cfg = EnvSchema.parse({});
   assertEquals(cfg.PORT, 8000);
-  assertEquals(cfg.GITHUB_REPO, "simtxng/transmitter-go");
-  assertEquals(cfg.PREFETCH, true);
-  assertEquals(cfg.LATEST_TTL, 60);
-  assertEquals(cfg.LINUX_WORKFLOW, "build-linux.yml");
+  assertEquals(cfg.CACHE_DIR, "./cache");
+  assertEquals(cfg.TAG_TTL, 300);
+  assertEquals(cfg.UPLOAD_MAX_MB, 500);
+  assertEquals(cfg.UPLOAD_TOKEN, undefined);
 
-  const off = EnvSchema.parse({ GITHUB_TOKEN: "t", PREFETCH: "0" });
-  assertEquals(off.PREFETCH, false);
-
-  const coerced = EnvSchema.parse({ GITHUB_TOKEN: "t", PORT: "9000" });
+  const coerced = EnvSchema.parse({ PORT: "9000", UPLOAD_TOKEN: "secret" });
   assertEquals(coerced.PORT, 9000);
+  assertEquals(coerced.UPLOAD_TOKEN, "secret");
 
-  assert(!EnvSchema.safeParse({}).success, "missing token fails");
-  assert(!EnvSchema.safeParse({ GITHUB_TOKEN: "" }).success, "empty token fails");
-  assert(!EnvSchema.safeParse({ GITHUB_TOKEN: "t", PORT: "abc" }).success, "bad port fails");
-  assert(
-    !EnvSchema.safeParse({ GITHUB_TOKEN: "t", CACHE_MAX_RUNS: "-1" }).success,
-    "negative max runs fails",
-  );
+  assert(!EnvSchema.safeParse({ PORT: "abc" }).success, "bad port fails");
+  assert(!EnvSchema.safeParse({ TAG_TTL: "-1" }).success, "negative ttl fails");
+  assert(!EnvSchema.safeParse({ UPLOAD_MAX_MB: "0" }).success, "zero max fails");
 });
 
 Deno.test("AppOptionsSchema: rejects bad config", () => {
   const good = {
-    repo: "o/r",
-    token: "t",
-    workflows: { linux: "a.yml", windows: "b.yml", macos: "c.yml" },
     cacheDir: "/tmp/x",
-    latestTtlMs: 1000,
     tagTtlMs: 1000,
     targetsTtlMs: 1000,
-    cacheMaxRuns: 5,
   };
   assert(AppOptionsSchema.safeParse(good).success);
-  assert(!AppOptionsSchema.safeParse({ ...good, latestTtlMs: -1 }).success);
-  assert(!AppOptionsSchema.safeParse({ ...good, latestTtlMs: NaN }).success);
-  assert(!AppOptionsSchema.safeParse({ ...good, repo: "" }).success);
-  assert(!AppOptionsSchema.safeParse({ ...good, cacheMaxRuns: 1.5 }).success);
-  assert(
-    !AppOptionsSchema.safeParse({
-      ...good,
-      workflows: { linux: "a.yml", windows: "b.yml" },
-    }).success,
-    "missing macos workflow fails",
-  );
+  assert(!AppOptionsSchema.safeParse({ ...good, tagTtlMs: -1 }).success);
+  assert(!AppOptionsSchema.safeParse({ ...good, tagTtlMs: NaN }).success);
+  assert(!AppOptionsSchema.safeParse({ ...good, cacheDir: "" }).success);
+  assert(!AppOptionsSchema.safeParse({ ...good, targetsTtlMs: -1 }).success);
 });
 
 Deno.test("createApp: invalid options throw HttpError 422 fast", async () => {
@@ -163,43 +143,14 @@ Deno.test("createApp: invalid options throw HttpError 422 fast", async () => {
     assert422(
       () =>
         createApp({
-          repo: "o/r",
-          token: "t",
-          workflows: { linux: "a.yml", windows: "b.yml", macos: "c.yml" },
           cacheDir: dir,
-          latestTtlMs: -5,
-          tagTtlMs: 1000,
+          tagTtlMs: -5,
           targetsTtlMs: 1000,
-          cacheMaxRuns: 5,
         }),
-      "negative TTL",
     );
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
-});
-
-Deno.test("GitHub payload schemas: reject malformed data", () => {
-  const run = {
-    id: 1,
-    head_branch: "main",
-    head_sha: "abc",
-    run_number: 2,
-    display_title: "t",
-    name: "n",
-    html_url: "https://x",
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-02T00:00:00Z",
-  };
-  assert(RunListSchema.safeParse({ workflow_runs: [run] }).success);
-  assert(!RunListSchema.safeParse({ workflow_runs: [{ ...run, id: "x" }] }).success);
-  assert(!RunListSchema.safeParse({ workflow_runs: "x" }).success);
-  assert(!RunListSchema.safeParse({}).success);
-  assert(
-    ArtifactsSchema.safeParse({ artifacts: [{ id: 1, expired: false }] }).success,
-  );
-  assert(!ArtifactsSchema.safeParse({ artifacts: [{ id: 1 }] }).success);
-  assert(!ArtifactsSchema.safeParse({ artifacts: null }).success);
 });
 
 Deno.test("TargetDefSchema: shipped table entries are all valid", () => {
@@ -212,7 +163,7 @@ Deno.test("TargetDefSchema: shipped table entries are all valid", () => {
 });
 
 Deno.test("parseOr422: 422 carries Zod default details", () => {
-  const err = assert422(() => parseOr422(RunListSchema, {}));
-  assertStringIncludes(err.message, "workflow_runs");
+  const err = assert422(() => parseOr422(z.object({ a: z.number() }), {}));
+  assertStringIncludes(err.message, "a");
   assert(parseOr422(z.object({ a: z.number() }), { a: 1 }).a === 1);
 });

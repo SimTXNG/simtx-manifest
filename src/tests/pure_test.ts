@@ -7,9 +7,7 @@ import {
 import {
   json,
   matchesTarget,
-  runInfo,
   text,
-  type Run,
 } from "../app.ts";
 import {
   canonicalKind,
@@ -127,27 +125,6 @@ Deno.test("RefSchema: accepts refs, rejects junk with 422", () => {
     assertEquals((err as HttpError).status, 422, JSON.stringify(bad));
   }
   assertEquals(parseOr422(RefSchema, "V1.0"), "v1.0");
-});
-
-Deno.test("runInfo: maps fields, slices sha, falls back title", () => {
-  assertEquals(runInfo(null), null);
-  const full: Run = {
-    id: 42,
-    head_branch: "main",
-    head_sha: "abcdef1234567890",
-    run_number: 9,
-    display_title: "PR title",
-    name: "workflow",
-    html_url: "https://example.com/run",
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-02T00:00:00Z",
-  };
-  const info = runInfo(full)!;
-  assertEquals(info.sha, "abcdef1");
-  assertEquals(info.full_sha, "abcdef1234567890");
-  assertEquals(info.title, "PR title");
-  assertEquals(info.built_at, "2026-01-02T00:00:00Z");
-  assertEquals(runInfo({ ...full, display_title: "" })!.title, "workflow");
 });
 
 Deno.test("text/json helpers: status, content-type, trailing newline", async () => {

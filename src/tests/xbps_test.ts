@@ -15,7 +15,7 @@ import { parsePlist, serializePlist } from "../repo-plist.ts";
 import type { PlistDict } from "../repo-plist.ts";
 import { gunzipBytes, gzipBytes, sha256Hex } from "../repo-util.ts";
 import { listTar } from "../repo-tar.ts";
-import { makeRun, req, runsResponse, testCtx } from "./util.ts";
+import { req, seedUploadFixture, testCtx } from "./util.ts";
 
 const FIX = new URL("./fixtures/", import.meta.url);
 const PKG_NAME = "simtx-test-0.1.0_1.x86_64.xbps";
@@ -189,16 +189,10 @@ Deno.test("xbps: repodata entries and RSA signature", async () => {
   );
 });
 
-async function seedRun(dir: string, runId: number): Promise<void> {
-  await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
-  await Deno.copyFile(new URL(PKG_NAME, FIX), `${dir}/${runId}/${PKG_NAME}`);
-}
-
 function xbpsCtx(dir: string, key?: string) {
   return testCtx(dir, {
     xbpsSigningKey: key,
     xbpsSignedBy: "Test XBPS <test@example.com>",
-    fetchImpl: () => Promise.resolve(runsResponse([makeRun({ id: 77 })])),
   });
 }
 
@@ -217,7 +211,7 @@ Deno.test("xbps routes: unsigned repo answers 503", async () => {
 Deno.test("xbps routes: repodata, package, sig2, pubkey + HEAD", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    await seedRun(dir, 77);
+    await seedUploadFixture(dir, "latest", "app", "linux", "amd64", "xbps", PKG_NAME);
     const ctx = xbpsCtx(dir, await fixtureKey());
     const pkgBytes = await fixturePkg();
 
@@ -234,7 +228,7 @@ Deno.test("xbps routes: repodata, package, sig2, pubkey + HEAD", async () => {
 
     const pkg = await ctx.app.handle(req(`/xbps/${PKG_NAME}`));
     assertEquals(pkg.status, 200);
-    assertEquals(pkg.headers.get("x-release-ref"), "main");
+    assertEquals(pkg.headers.get("x-release-ref"), "latest");
     assertEquals(
       new Uint8Array(await pkg.arrayBuffer()),
       pkgBytes,
@@ -274,7 +268,7 @@ Deno.test("xbps routes: repodata, package, sig2, pubkey + HEAD", async () => {
 Deno.test("xbps routes: unknown package name 404", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    await seedRun(dir, 77);
+    await seedUploadFixture(dir, "latest", "app", "linux", "amd64", "xbps", PKG_NAME);
     const ctx = xbpsCtx(dir, await fixtureKey());
     const res = await ctx.app.handle(
       req("/xbps/simtx-9.9_1.x86_64.xbps"),

@@ -566,16 +566,11 @@ chmod +x simtx-cli
                         j.linux?.built_at ||
                         j.windows?.built_at ||
                         j.macos?.built_at;
-                    const branch =
-                        j.linux?.branch ||
-                        j.windows?.branch ||
-                        j.macos?.branch ||
-                        "latest";
+                    const branch = j.ref || "latest";
                     const ver = j.version ? "v" + j.version + " · " : "";
                     const label =
                         ver + branch + (t ? " · built " + rel(t) : "");
                     $("status").textContent = label;
-                    const sha = j.linux?.sha || j.windows?.sha || j.macos?.sha;
                     $("meta").innerHTML = "";
                     const b = document.createElement("b");
                     b.textContent = ver + branch;
@@ -584,12 +579,6 @@ chmod +x simtx-cli
                         $("meta").appendChild(
                             document.createTextNode(" · built " + rel(t)),
                         );
-                    if (sha) {
-                        $("meta").appendChild(document.createElement("br"));
-                        const c = document.createElement("code");
-                        c.textContent = sha;
-                        $("meta").appendChild(c);
-                    }
                 })
                 .catch(() => {
                     $("status").textContent = "Status unavailable";

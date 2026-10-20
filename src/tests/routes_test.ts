@@ -3,13 +3,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { stripLeadingV } from "../app.ts";
-import {
-  makeRun,
-  req,
-  runsResponse,
-  tagsResponse,
-  testCtx,
-} from "./util.ts";
+import { req, seedUpload, testCtx } from "./util.ts";
 
 async function withTempDir(fn: (dir: string) => Promise<void>) {
   const dir = await Deno.makeTempDir();
@@ -20,7 +14,8 @@ async function withTempDir(fn: (dir: string) => Promise<void>) {
   }
 }
 
-Deno.test("routes: landing page GET + HEAD", async () => {  await withTempDir(async (dir) => {
+Deno.test("routes: landing page GET + HEAD", async () => {
+  await withTempDir(async (dir) => {
     const ctx = testCtx(dir);
     const get = await ctx.app.handle(req("/"));
     assertEquals(get.status, 200);
@@ -67,78 +62,53 @@ Deno.test("routes: healthz GET + HEAD", async () => {
   });
 });
 
-Deno.test("routes: version set vs unset falls back to latest tag", async () => {
+Deno.test("routes: version set vs unset falls back to newest uploaded tag", async () => {
   await withTempDir(async (dir) => {
     const set = testCtx(dir, { versionReturn: "v0.0.1" });
     const res = await set.app.handle(req("/version"));
     assertEquals(res.status, 200);
     assertEquals(await res.text(), "v0.0.1\n");
 
-    const fallback = testCtx(dir, {
-      fetchImpl: (input) =>
-        String(input).includes("/tags")
-          ? Promise.resolve(tagsResponse(["v0.1.0-alpha-5"]))
-          : Promise.resolve(runsResponse([makeRun()])),
-    });
+    await seedUpload(dir, "v0.1.0-alpha-5", "app", "linux", "amd64", "deb", "a.deb", "x");
+    const fallback = testCtx(dir);
     const viaTag = await fallback.app.handle(req("/version"));
     assertEquals(viaTag.status, 200);
     assertEquals(await viaTag.text(), "0.1.0-alpha-5\n");
   });
 });
 
-Deno.test("routes: version fallback strips one leading v/V", async () => {
+Deno.test("routes: version fallback strips one leading v and ignores latest", async () => {
   await withTempDir(async (dir) => {
-    for (const [tag, want] of [
-      ["v1.2.3", "1.2.3"],
-      ["V1.2.3", "1.2.3"],
-      ["1.2.3", "1.2.3"],
-    ] as Array<[string, string]>) {
-      const ctx = testCtx(dir, {
-        fetchImpl: () => Promise.resolve(tagsResponse([tag])),
-      });
-      const res = await ctx.app.handle(req("/version"));
-      assertEquals(res.status, 200, tag);
-      assertEquals(await res.text(), `${want}\n`, tag);
-    }
+    await seedUpload(dir, "latest", "app", "linux", "amd64", "deb", "l.deb", "x");
+    await seedUpload(dir, "v1.2.3", "app", "linux", "amd64", "deb", "a.deb", "x");
+    const v = testCtx(dir);
+    assertEquals(await (await v.app.handle(req("/version"))).text(), "1.2.3\n");
+
+    await seedUpload(dir, "2.0.0", "app", "linux", "amd64", "deb", "b.deb", "y");
+    const plain = testCtx(dir);
+    assertEquals(await (await plain.app.handle(req("/version"))).text(), "2.0.0\n");
     assertEquals(stripLeadingV("v0.1.0-alpha-5"), "0.1.0-alpha-5");
     assertEquals(stripLeadingV("V2.0"), "2.0");
     assertEquals(stripLeadingV("1.0"), "1.0");
   });
 });
 
-Deno.test("routes: version fallback 503 when no tags or lookup fails", async () => {
+Deno.test("routes: version fallback 503 when no uploaded tags", async () => {
   await withTempDir(async (dir) => {
-    const empty = testCtx(dir, {
-      fetchImpl: (input) =>
-        String(input).includes("/tags")
-          ? Promise.resolve(tagsResponse([]))
-          : Promise.resolve(runsResponse([makeRun()])),
-    });
-    const missing = await empty.app.handle(req("/version"));
+    const ctx = testCtx(dir);
+    const missing = await ctx.app.handle(req("/version"));
     assertEquals(missing.status, 503);
     assertStringIncludes(await missing.text(), "VERSION_RETURN");
-
-    const failing = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(new Response("err", { status: 500 })),
-    });
-    const failed = await failing.app.handle(req("/version"));
-    assertEquals(failed.status, 503);
-    assertStringIncludes(await failed.text(), "VERSION_RETURN");
   });
 });
 
-Deno.test("routes: version fallback caches the tag lookup", async () => {
+Deno.test("routes: version fallback caches the uploaded tag scan", async () => {
   await withTempDir(async (dir) => {
-    let calls = 0;
-    const ctx = testCtx(dir, {
-      fetchImpl: (input) => {
-        if (String(input).includes("/tags")) calls++;
-        return Promise.resolve(tagsResponse(["v3.2.1"]));
-      },
-    });
+    await seedUpload(dir, "v3.2.1", "app", "linux", "amd64", "deb", "a.deb", "x");
+    const ctx = testCtx(dir);
     assertEquals(await (await ctx.app.handle(req("/version"))).text(), "3.2.1\n");
+    await seedUpload(dir, "v4.0.0", "app", "linux", "amd64", "deb", "b.deb", "y");
     assertEquals(await (await ctx.app.handle(req("/version"))).text(), "3.2.1\n");
-    assertEquals(calls, 1);
   });
 });
 
@@ -153,7 +123,7 @@ Deno.test("routes: unknown path 404, wrong method documents Elysia default", asy
   });
 });
 
-Deno.test("routes: invalid ref rejected with 422 before any network", async () => {
+Deno.test("routes: invalid ref rejected with 422 before any upload lookup", async () => {
   await withTempDir(async (dir) => {
     const ctx = testCtx(dir);
     const res = await ctx.app.handle(req("/api/targets/bad!ref"));
@@ -161,7 +131,7 @@ Deno.test("routes: invalid ref rejected with 422 before any network", async () =
   });
 });
 
-Deno.test("routes: param validation failures are 422 without network", async () => {
+Deno.test("routes: param validation failures are 422", async () => {
   await withTempDir(async (dir) => {
     const ctx = testCtx(dir);
     const cases: Array<[string, string]> = [
@@ -181,37 +151,25 @@ Deno.test("routes: param validation failures are 422 without network", async () 
   });
 });
 
-Deno.test("routes: arch aliases pass validation (reach network layer)", async () => {
+Deno.test("routes: arch aliases pass validation then 404 when not uploaded", async () => {
   await withTempDir(async (dir) => {
-    const ctx = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(new Response("err", { status: 500 })),
-    });
+    const ctx = testCtx(dir);
     for (const path of [
       "/latest/app/linux/x86_64/deb",
       "/latest/app/macos/aarch64/dmg",
     ]) {
       const res = await ctx.app.handle(req(path));
-      assertEquals(res.status, 502, path);
+      assertEquals(res.status, 404, path);
     }
   });
 });
 
 Deno.test("routes: seeded download GET + HEAD, legacy + canonical, cache headers", async () => {
   await withTempDir(async (dir) => {
-    const runId = 4242;
-    await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
-    await Deno.writeFile(
-      `${dir}/${runId}/simtx-1.0_amd64.deb`,
-      new TextEncoder().encode("fake-deb"),
-    );
-    await Deno.writeFile(
-      `${dir}/${runId}/simtx-cli.exe`,
-      new TextEncoder().encode("fake-exe"),
-    );
-    const run = makeRun({ id: runId, head_branch: "v1.2.3" });
-    const ctx = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(runsResponse([run])),
-    });
+    await seedUpload(dir, "v1.2.3", "app", "linux", "amd64", "deb", "simtx-1.0_amd64.deb", "fake-deb");
+    await seedUpload(dir, "v1.2.3", "cli", "windows", "amd64", "binary", "simtx-cli.exe", "fake-exe");
+    await seedUpload(dir, "latest", "app", "linux", "amd64", "deb", "simtx-1.0_amd64.deb", "fake-deb");
+    const ctx = testCtx(dir);
 
     const get = await ctx.app.handle(req("/v1.2.3/app/linux/amd64/deb"));
     assertEquals(get.status, 200);
@@ -247,76 +205,66 @@ Deno.test("routes: seeded download GET + HEAD, legacy + canonical, cache headers
   });
 });
 
-Deno.test("routes: missing file in artifact -> 404", async () => {
+Deno.test("routes: missing upload -> 404", async () => {
   await withTempDir(async (dir) => {
-    const runId = 999;
-    await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
-    await Deno.writeFile(`${dir}/${runId}/unrelated.txt`, new TextEncoder().encode("x"));
-    const ctx = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(runsResponse([makeRun({ id: runId })])),
-    });
+    const ctx = testCtx(dir);
     const res = await ctx.app.handle(req("/v9/app/linux/amd64/deb"));
     assertEquals(res.status, 404);
-    assertStringIncludes(await res.text(), "No deb");
+    const body = await res.text();
+    assertStringIncludes(body, "No deb");
+    assertStringIncludes(body, "uploaded");
   });
 });
 
-Deno.test("routes: no successful build -> 404", async () => {
+Deno.test("routes: api/latest shape + status alias", async () => {
   await withTempDir(async (dir) => {
-    const ctx = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(runsResponse([])),
-    });
-    const res = await ctx.app.handle(req("/v9/app/linux/amd64/deb"));
-    assertEquals(res.status, 404);
-    assertStringIncludes(await res.text(), "No successful linux build");
-  });
-});
+    const linux = await seedUpload(dir, "latest", "app", "linux", "amd64", "deb", "a.deb", "x");
+    const windows = await seedUpload(dir, "latest", "app", "windows", "amd64", "exe", "a.exe", "x");
+    const macos = await seedUpload(dir, "latest", "app", "macos", "arm64", "dmg", "a.dmg", "x");
+    await Deno.utime(linux, new Date("2026-01-01T00:00:00Z"), new Date("2026-01-01T00:00:00Z"));
+    await Deno.utime(windows, new Date("2026-03-01T00:00:00Z"), new Date("2026-03-01T00:00:00Z"));
+    await Deno.utime(macos, new Date("2026-02-01T00:00:00Z"), new Date("2026-02-01T00:00:00Z"));
 
-Deno.test("routes: api/latest shape + status alias", async () => {  await withTempDir(async (dir) => {
-    const byWorkflow = (wf: string) =>
-      wf.includes("linux")
-        ? makeRun({ id: 1, updated_at: "2026-01-01T00:00:00Z" })
-        : wf.includes("windows")
-        ? makeRun({ id: 2, updated_at: "2026-03-01T00:00:00Z" })
-        : makeRun({ id: 3, updated_at: "2026-02-01T00:00:00Z" });
-    const ctx = testCtx(dir, {
-      versionReturn: "1.0",
-      fetchImpl: (input) =>
-        Promise.resolve(runsResponse([byWorkflow(String(input))])),
-    });
+    const ctx = testCtx(dir, { versionReturn: "1.0" });
     for (const path of ["/api/latest", "/api/status"]) {
       const res = await ctx.app.handle(req(path));
       assertEquals(res.status, 200, path);
       const body = await res.json() as {
         version: string;
-        repo: string;
+        ref: string;
         newest_built_at: string;
+        linux: { branch: string; built_at: string };
+        windows: { built_at: string };
+        macos: { built_at: string };
+        repo?: string;
       };
       assertEquals(body.version, "1.0");
-      assertEquals(body.repo, "o/r");
-      assertEquals(body.newest_built_at, "2026-03-01T00:00:00Z");
+      assertEquals(body.ref, "latest");
+      assertEquals(body.repo, undefined);
+      assertEquals(body.newest_built_at, "2026-03-01T00:00:00.000Z");
+      assertEquals(body.linux.branch, "latest");
+      assertEquals(body.windows.built_at, "2026-03-01T00:00:00.000Z");
+      assertEquals(body.macos.built_at, "2026-02-01T00:00:00.000Z");
     }
   });
 });
 
 Deno.test("routes: appimage-zsync + sha256 kinds, range 206/416, accept-ranges", async () => {
   await withTempDir(async (dir) => {
-    const runId = 777;
-    await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
     const enc = new TextEncoder();
-    await Deno.writeFile(`${dir}/${runId}/simtx-x86_64.AppImage`, enc.encode("0123456789"));
-    await Deno.writeFile(
-      `${dir}/${runId}/simtx-x86_64.AppImage.zsync`,
-      enc.encode("zsync-data"),
-    );
-    await Deno.writeFile(
-      `${dir}/${runId}/simtx-x86_64.AppImage.sha256`,
+    await seedUpload(dir, "latest", "app", "linux", "amd64", "appimage", "simtx-x86_64.AppImage", enc.encode("0123456789"));
+    await seedUpload(dir, "latest", "app", "linux", "amd64", "appimage-zsync", "simtx-x86_64.AppImage.zsync", enc.encode("zsync-data"));
+    await seedUpload(
+      dir,
+      "latest",
+      "app",
+      "linux",
+      "amd64",
+      "appimage-sha256",
+      "simtx-x86_64.AppImage.sha256",
       enc.encode("deadbeef ".padEnd(65, "0") + " simtx-x86_64.AppImage\n"),
     );
-    const run = makeRun({ id: runId, head_branch: "main" });
-    const ctx = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(runsResponse([run])),
-    });
+    const ctx = testCtx(dir, { versionReturn: "1.0" });
 
     const zsync = await ctx.app.handle(req("/latest/app/linux/amd64/appimage-zsync"));
     assertEquals(zsync.status, 200);
@@ -347,47 +295,36 @@ Deno.test("routes: appimage-zsync + sha256 kinds, range 206/416, accept-ranges",
 
 Deno.test("routes: api/updates/latest shape + version-unset 503", async () => {
   await withTempDir(async (dir) => {
-    const runId = 778;
-    await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
     const enc = new TextEncoder();
-    await Deno.writeFile(`${dir}/${runId}/simtx-x86_64.AppImage`, enc.encode("img"));
-    await Deno.writeFile(
-      `${dir}/${runId}/simtx-x86_64.AppImage.zsync`,
-      enc.encode("z"),
-    );
     const hash = "a".repeat(64);
-    await Deno.writeFile(
-      `${dir}/${runId}/simtx-x86_64.AppImage.sha256`,
+    await seedUpload(dir, "latest", "app", "linux", "amd64", "appimage", "simtx-x86_64.AppImage", enc.encode("img"));
+    await seedUpload(dir, "latest", "app", "linux", "amd64", "appimage-zsync", "simtx-x86_64.AppImage.zsync", enc.encode("z"));
+    await seedUpload(
+      dir,
+      "latest",
+      "app",
+      "linux",
+      "amd64",
+      "appimage-sha256",
+      "simtx-x86_64.AppImage.sha256",
       enc.encode(`${hash}  simtx-x86_64.AppImage\n`),
     );
-    const run = makeRun({ id: runId, head_branch: "main" });
-    const ctx = testCtx(dir, {
-      versionReturn: "0.1.0-alpha-5",
-      fetchImpl: () => Promise.resolve(runsResponse([run])),
-    });
+    const ctx = testCtx(dir, { versionReturn: "0.1.0-alpha-5" });
     const res = await ctx.app.handle(req("/api/updates/latest"));
     assertEquals(res.status, 200);
     const body = await res.json() as Record<string, unknown>;
     assertEquals(body["version"], "0.1.0-alpha-5");
-    assertEquals(body["appimage_url"], "/main/app/linux/amd64/appimage");
-    assertEquals(body["zsync_url"], "/main/app/linux/amd64/appimage-zsync");
-    assertEquals(body["sha256_url"], "/main/app/linux/amd64/appimage-sha256");
+    assertEquals(body["ref"], "latest");
+    assertEquals(body["appimage_url"], "/latest/app/linux/amd64/appimage");
+    assertEquals(body["zsync_url"], "/latest/app/linux/amd64/appimage-zsync");
+    assertEquals(body["sha256_url"], "/latest/app/linux/amd64/appimage-sha256");
     assertEquals(body["sha256"], hash);
 
-    const unset = testCtx(dir, {
-      fetchImpl: (input) =>
-        String(input).includes("/tags")
-          ? Promise.resolve(tagsResponse([]))
-          : Promise.resolve(runsResponse([run])),
-    });
+    const unset = testCtx(dir);
     assertEquals((await unset.app.handle(req("/api/updates/latest"))).status, 503);
 
-    const viaTag = testCtx(dir, {
-      fetchImpl: (input) =>
-        String(input).includes("/tags")
-          ? Promise.resolve(tagsResponse(["v0.1.0-alpha-5"]))
-          : Promise.resolve(runsResponse([run])),
-    });
+    await seedUpload(dir, "v0.1.0-alpha-5", "app", "linux", "amd64", "deb", "a.deb", "x");
+    const viaTag = testCtx(dir);
     const tagged = await viaTag.app.handle(req("/api/updates/latest"));
     assertEquals(tagged.status, 200);
     assertEquals(
@@ -397,18 +334,12 @@ Deno.test("routes: api/updates/latest shape + version-unset 503", async () => {
   });
 });
 
-Deno.test("routes: zsync missing from old artifact -> 404", async () => {  await withTempDir(async (dir) => {
-    const runId = 779;
-    await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
-    await Deno.writeFile(
-      `${dir}/${runId}/simtx-x86_64.AppImage`,
-      new TextEncoder().encode("img"),
-    );
-    const ctx = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(runsResponse([makeRun({ id: runId })])),
-    });
+Deno.test("routes: zsync missing -> 404", async () => {
+  await withTempDir(async (dir) => {
+    await seedUpload(dir, "latest", "app", "linux", "amd64", "appimage", "simtx-x86_64.AppImage", "img");
+    const ctx = testCtx(dir, { versionReturn: "1.0" });
     assertEquals(
-      (await ctx.app.handle(req("/v9/app/linux/amd64/appimage-zsync"))).status,
+      (await ctx.app.handle(req("/latest/app/linux/amd64/appimage-zsync"))).status,
       404,
     );
   });
@@ -429,20 +360,10 @@ Deno.test("routes: pubkey serves the signing key", async () => {
 
 Deno.test("routes: arch pkg detached signature downloads as pkg.zst.sig", async () => {
   await withTempDir(async (dir) => {
-    const runId = 780;
-    await Deno.mkdir(`${dir}/${runId}`, { recursive: true });
     const enc = new TextEncoder();
-    await Deno.writeFile(
-      `${dir}/${runId}/simtx-0.1.0alpha5-1-x86_64.pkg.tar.zst`,
-      enc.encode("pkg"),
-    );
-    await Deno.writeFile(
-      `${dir}/${runId}/simtx-0.1.0alpha5-1-x86_64.pkg.tar.zst.sig`,
-      enc.encode("sig"),
-    );
-    const ctx = testCtx(dir, {
-      fetchImpl: () => Promise.resolve(runsResponse([makeRun({ id: runId })])),
-    });
+    await seedUpload(dir, "v9", "app", "linux", "amd64", "pkg.zst", "simtx-0.1.0alpha5-1-x86_64.pkg.tar.zst", enc.encode("pkg"));
+    await seedUpload(dir, "v9", "app", "linux", "amd64", "pkg.zst.sig", "simtx-0.1.0alpha5-1-x86_64.pkg.tar.zst.sig", enc.encode("sig"));
+    const ctx = testCtx(dir);
     const res = await ctx.app.handle(req("/v9/app/linux/amd64/pkg.zst.sig"));
     assertEquals(res.status, 200);
     assertEquals(await res.text(), "sig");
