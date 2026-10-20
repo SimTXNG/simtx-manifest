@@ -55,6 +55,16 @@ Deno.test("collect: junk-only zip yields empty set", () => {
   assertEquals(collect(zip), {});
 });
 
+Deno.test("collect: keeps xbps package, drops foreign sig2", () => {
+  const zip = zipSync({
+    "dist/simtx-0.1.0_1.x86_64.xbps": bin("xbps"),
+    "dist/simtx-0.1.0_1.x86_64.xbps.sig2": bin("sig"),
+  });
+  const out = collect(zip);
+  assert("simtx-0.1.0_1.x86_64.xbps" in out);
+  assert(!("simtx-0.1.0_1.x86_64.xbps.sig2" in out));
+});
+
 Deno.test("collect: keeps arch pkg detached signature", () => {
   const zip = zipSync({
     "dist/simtx-0.1.0alpha5-1-x86_64.pkg.tar.zst": bin("pkg"),

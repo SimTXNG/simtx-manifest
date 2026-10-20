@@ -14,7 +14,7 @@ import {
   packagesEntry,
   parseAr,
 } from "../repo-apt.ts";
-import { gzipBytes, md5Hex } from "../repo-util.ts";
+import { md5Hex } from "../repo-util.ts";
 import { listTar, writeTar } from "../repo-tar.ts";
 import { clearSign, detachSign, loadSigningKey } from "../repo-sign.ts";
 import { makeRun, req, runsResponse, testCtx } from "./util.ts";

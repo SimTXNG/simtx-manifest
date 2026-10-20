@@ -19,6 +19,13 @@ import {
   packagesEntry,
 } from "./repo-apt.ts";
 import { clearSign, detachSign, loadSigningKey } from "./repo-sign.ts";
+import {
+  buildXbpsRepo,
+  loadXbpsSigningKey,
+  parseXbpsPackage,
+  XBPS_REPODATA,
+} from "./repo-xbps.ts";
+import type { XbpsSigner } from "./repo-xbps.ts";
 import { gzipBytes, sha256Hex } from "./repo-util.ts";
 import {
   findUploadFile,
@@ -59,6 +66,7 @@ export const WANTED_EXTS = [
   ".sig",
   ".exe",
   ".rpm",
+  ".xbps",
   ".pkg.tar.zst",
   ".dmg",
 ];
@@ -100,6 +108,7 @@ export function matchesTarget(
       );
     }
     if (kind === "rpm") return n.endsWith(".rpm");
+    if (kind === "xbps") return n.endsWith(".xbps");
     if (kind === "pkg.zst" || kind === "pkg.tar.zst" || kind === "arch") {
       return n.endsWith(".pkg.tar.zst");
     }
@@ -153,6 +162,7 @@ export function runInfo(run: Run | null) {
 export const TARGET_DEFS: TargetDef[] = TargetDefSchema.array().parse([
   { product: "app", os: "linux", arch: "amd64", kind: "deb" },
   { product: "app", os: "linux", arch: "amd64", kind: "rpm" },
+  { product: "app", os: "linux", arch: "amd64", kind: "xbps" },
   { product: "app", os: "linux", arch: "amd64", kind: "pkg.zst" },
   { product: "app", os: "linux", arch: "amd64", kind: "pkg.zst.sig" },
   { product: "app", os: "linux", arch: "amd64", kind: "appimage" },
@@ -222,6 +232,10 @@ export function createApp(opts: AppOptions) {
   const VERSION_RETURN = cfg.versionReturn?.trim() || undefined;
   const UPLOAD_TOKEN = cfg.uploadToken?.trim() || undefined;
   const UPLOAD_MAX_BYTES = cfg.uploadMaxBytes ?? 524_288_000;
+  const XBPS_SIGNING_KEY = cfg.xbpsSigningKey?.trim() || undefined;
+  const XBPS_SIGNED_BY = cfg.xbpsSignedBy?.trim() ||
+    "SimTX XBPS Repository <packages@simtx.net>";
+  const XBPS_PASSPHRASE = cfg.xbpsPassphrase;
   const INDEX_URL =
     opts.indexFileUrl ?? new URL("./static/index.html", import.meta.url);
 
@@ -267,6 +281,7 @@ export function createApp(opts: AppOptions) {
     aptCache = null;
     archCache = null;
     rpmCache = null;
+    xbpsCache = null;
   }
 
   const uploadDeps = {
@@ -576,7 +591,7 @@ export function createApp(opts: AppOptions) {
     if (Object.keys(files).length === 0) {
       throw new HttpError(
         502,
-        "Artifact contained no .deb/.rpm/.pkg.tar.zst/.AppImage/.exe/simtx-cli files",
+        "Artifact contained no .deb/.rpm/.xbps/.pkg.tar.zst/.AppImage/.exe/simtx-cli files",
       );
     }
 
@@ -1275,11 +1290,122 @@ export function createApp(opts: AppOptions) {
   // 503 when unsigned) vs. package pool (always served). Checking the
   // filename first avoids triggering signKey() for package requests.
   async function serveArch(file: string, isHead: boolean): Promise<Response> {
-    if (ARCH_DB_FILES.has(file)) return serveArchDb(file, isHead);
+    if (ARCH_DB_FILES.has(file)) {
+      return await serveArchDb(file, isHead);
+    }
     if (file.endsWith(".pkg.tar.zst") || file.endsWith(".pkg.tar.zst.sig")) {
-      return serveArchPool(file, isHead);
+      return await serveArchPool(file, isHead);
     }
     throw new HttpError(404, "unknown repo database file");
+  }
+
+  // -- XBPS/Void repo (/xbps/...) --------------------------------------------
+  // Repodata is a gzip tar holding index.plist, index-meta.plist and an
+  // empty stage.plist. Packages are <pkgver>.x86_64.xbps + raw RSA .sig2.
+
+  interface XbpsRepo {
+    repodata: Uint8Array;
+    sig2: Uint8Array;
+    fileName: string;
+    pkgBytes: Uint8Array;
+    ref: string;
+    fingerprint: string;
+  }
+  let xbpsCache: { key: string; repo: XbpsRepo } | null = null;
+  let xbpsKeyP: Promise<XbpsSigner> | null = null;
+
+  function xbpsSignKey(): Promise<XbpsSigner> {
+    const keyFile = XBPS_SIGNING_KEY;
+    if (!keyFile) {
+      throw new HttpError(
+        503,
+        "xbps repository signing is not configured (XBPS_SIGNING_KEY_FILE unset)",
+      );
+    }
+    if (!xbpsKeyP) {
+      try {
+        xbpsKeyP = Promise.resolve(
+          loadXbpsSigningKey(keyFile, XBPS_PASSPHRASE),
+        );
+      } catch (e) {
+        xbpsKeyP = null;
+        throw new HttpError(
+          503,
+          `xbps signing key invalid: ${(e as Error).message}`,
+        );
+      }
+    }
+    return xbpsKeyP;
+  }
+
+  async function xbpsRepo(): Promise<XbpsRepo> {
+    // Signing first: unsigned servers answer 503 even with no builds.
+    const key = await xbpsSignKey();
+    const pkg = await readRunFile("linux", "latest", "app", "xbps");
+    const hash = await sha256Hex(pkg.data);
+    const cacheKey = `${pkg.run.head_branch}:${pkg.file}:${hash}`;
+    if (xbpsCache && xbpsCache.key === cacheKey) return xbpsCache.repo;
+    const parsed = await parseXbpsPackage(pkg.data);
+    const files = await buildXbpsRepo(parsed, pkg.data, key, XBPS_SIGNED_BY);
+    const repo: XbpsRepo = {
+      repodata: files.repodata,
+      sig2: files.sig2,
+      fileName: files.fileName,
+      pkgBytes: pkg.data,
+      ref: pkg.run.head_branch,
+      fingerprint: files.fingerprint,
+    };
+    xbpsCache = { key: cacheKey, repo };
+    return repo;
+  }
+
+  async function serveXbpsPubkey(isHead: boolean): Promise<Response> {
+    const key = await xbpsSignKey();
+    const body = new TextEncoder().encode(key.publicKeyPem);
+    const headers = {
+      "Content-Type": "application/x-pem-file",
+      "Content-Length": String(body.length),
+      "Content-Disposition": 'attachment; filename="xbps-pubkey.pem"',
+      "X-XBPS-Fingerprint": key.fingerprint,
+      "X-XBPS-Key-Bits": String(key.bits),
+      ...noCache,
+    };
+    if (isHead) return new Response(null, { headers });
+    return new Response(u8body(body), { headers });
+  }
+
+  async function serveXbps(file: string, isHead: boolean): Promise<Response> {
+    if (file === XBPS_REPODATA) {
+      const repo = await xbpsRepo();
+      const headers = {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": String(repo.repodata.length),
+        "Content-Disposition": `attachment; filename="${XBPS_REPODATA}"`,
+        ...noCache,
+      };
+      if (isHead) return new Response(null, { headers });
+      return new Response(u8body(repo.repodata), { headers });
+    }
+    if (!file.endsWith(".xbps") && !file.endsWith(".xbps.sig2")) {
+      throw new HttpError(404, "unknown xbps repository file");
+    }
+    const repo = await xbpsRepo();
+    const sig2Name = `${repo.fileName}.sig2`;
+    if (file !== repo.fileName && file !== sig2Name) {
+      throw new HttpError(404, `xbps repo has no ${file}`);
+    }
+    const isSig = file === sig2Name;
+    const body = isSig ? repo.sig2 : repo.pkgBytes;
+    const headers = {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": String(body.length),
+      "Content-Disposition": `attachment; filename="${file}"`,
+      "X-Release-Ref": repo.ref,
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "Accept-Ranges": "bytes",
+    };
+    if (isHead) return new Response(null, { headers });
+    return new Response(u8body(body), { headers });
   }
 
   // -- APT (dists/stable/...) --------------------------------------------------
@@ -1464,6 +1590,8 @@ export function createApp(opts: AppOptions) {
     .get("/pubkey", () => servePubkey())
     // Repo hosting: registered before the generic download routes so
     // static segments win over :ref params.
+    .get("/xbps/pubkey", () => serveXbpsPubkey(false))
+    .get("/xbps/:file", ({ params }) => serveXbps(params.file, false))
     .get("/arch/:arch/:file", ({ params }) => {
       if (params.arch !== "x86_64")
         throw new HttpError(422, "arch is x86_64 only");
@@ -1566,6 +1694,8 @@ export function createApp(opts: AppOptions) {
     .head("/pubkey", () =>
       servePubkey().then((r) => new Response(null, { headers: r.headers })),
     )
+    .head("/xbps/pubkey", () => serveXbpsPubkey(true))
+    .head("/xbps/:file", ({ params }) => serveXbps(params.file, true))
     .head("/arch/:arch/:file", ({ params }) => {
       if (params.arch !== "x86_64")
         throw new HttpError(422, "arch is x86_64 only");
@@ -1625,6 +1755,7 @@ export function createApp(opts: AppOptions) {
       rpmCache = null;
       archCache = null;
       aptCache = null;
+      xbpsCache = null;
     },
   };
 }

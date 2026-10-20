@@ -47,6 +47,7 @@ Deno.test("routes: install page GET + HEAD", async () => {
     assertStringIncludes(body, "Installing SimTX");
     assertStringIncludes(body, "manifest.simtx.net/pubkey");
     assertStringIncludes(body, "manifest.simtx.net/rpmrepo/");
+    assertStringIncludes(body, "manifest.simtx.net/xbps");
 
     const head = await ctx.app.handle(req("/install", { method: "HEAD" }));
     assertEquals(head.status, 200);

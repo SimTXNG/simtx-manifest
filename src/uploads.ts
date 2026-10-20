@@ -70,6 +70,8 @@ export function defaultUploadFilename(
       return "upload.deb";
     case "rpm":
       return "upload.rpm";
+    case "xbps":
+      return "upload.xbps";
     case "pkg.zst":
       return "upload.pkg.tar.zst";
     case "pkg.zst.sig":

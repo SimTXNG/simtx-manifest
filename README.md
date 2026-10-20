@@ -26,7 +26,7 @@ Canonical shape, five segments:
 /v1.2.3/cli/windows/amd64/binary
 ```
 
-Kinds per platform: `deb`, `rpm`, `pkg.zst`, `pkg.zst.sig`, `appimage`, `appimage-zsync`, `appimage-sha256` on Linux; `exe` on Windows; `dmg` on macOS (Apple Silicon only). The CLI ships as `binary`. Aliases work too: `x86_64` for `amd64`, `aarch64` for `arm64`, `pkg.tar.zst` and `arch` for `pkg.zst`.
+Kinds per platform: `deb`, `rpm`, `xbps`, `pkg.zst`, `pkg.zst.sig`, `appimage`, `appimage-zsync`, `appimage-sha256` on Linux; `exe` on Windows; `dmg` on macOS (Apple Silicon only). The CLI ships as `binary`. Aliases work too: `x86_64` for `amd64`, `aarch64` for `arm64`, `pkg.tar.zst` and `arch` for `pkg.zst`.
 
 A legacy four-segment form still works for the desktop app:
 
@@ -45,6 +45,8 @@ GET  /dists/stable/...    APT repo (InRelease, Release[.gpg], Packages[.gz])
 GET  /pool/main/*.deb     APT pool (conventional filename, immutable)
 GET  /arch/x86_64/...     Arch repo (simtx.db[.tar.gz][.sig], simtx.files...)
 GET  /rpmrepo/...         Fedora repo (repodata/, pool rpm)
+GET  /xbps/...            Void repo (x86_64-repodata, *.xbps[.sig2])
+GET  /xbps/pubkey         XBPS RSA public key + fingerprint headers
 GET  /api/latest          newest build per platform, as JSON
 GET  /api/targets[/ref]   which downloads exist for a ref, as JSON
 GET  /api/uploads/:ref    uploaded binaries for a ref, as JSON (Bearer auth)
@@ -73,10 +75,31 @@ All settings come from the environment, validated on startup. Copy `.env.example
 | `REFRESH_INTERVAL` | `300` | Seconds between background refreshes; `0` disables them |
 | `CACHE_MAX_RUNS` | `10` | Old run dirs past this count get pruned; `0` keeps everything |
 | `VERSION_RETURN` | (unset) | String returned by `/version` (and `version` in `/api/latest`, `/api/targets`, `/api/updates/latest`); when unset the latest git tag is used with one leading `v`/`V` stripped (`v0.1.0-alpha-5` → `0.1.0-alpha-5`), cached for `TAG_TTL` seconds, 503 if no tag can be found |
+| `XBPS_SIGNING_KEY_FILE` | (unset) | RSA private key for the XBPS repo (PKCS#1 or PKCS#8 PEM, chmod 600, never commit). Unset means `/xbps` repo routes answer 503; direct `.xbps` downloads still work |
+| `XBPS_SIGNED_BY` | `SimTX XBPS Repository <packages@simtx.net>` | `signature-by` value embedded in XBPS repodata |
+| `XBPS_PASSPHRASE` | (unset) | Passphrase for an encrypted XBPS RSA private key |
 | `UPLOAD_TOKEN` | (unset) | Bearer token guarding `PUT`/`DELETE /upload/...` and `GET /api/uploads/:ref`; unset means uploads answer 503 (disabled) |
 | `UPLOAD_MAX_MB` | `500` | Max bytes accepted for one upload |
 
 Bad values fail fast with the exact problem printed, instead of silently running on `NaN`.
+
+### XBPS repository key
+
+XBPS repositories require RSA, so they use a separate key from the Ed25519
+APT/Arch/RPM signing key. Generate a PKCS#1 PEM key and point the server at it:
+
+```sh
+ssh-keygen -t rsa -b 4096 -m PEM -f xbps-signing.key -N ""
+chmod 600 xbps-signing.key
+# .env
+# XBPS_SIGNING_KEY_FILE="./xbps-signing.key"
+# XBPS_SIGNED_BY="SimTX XBPS Repository <packages@simtx.net>"
+```
+
+The public half is embedded in `x86_64-repodata`; `.xbps.sig2` files are
+generated on demand from the same key. `GET /xbps/pubkey` serves the public
+PEM with its lowercase OpenSSH-style MD5 fingerprint in the `X-XBPS-Fingerprint` header.
+Never commit the private key (`xbps-signing.key` is gitignored).
 
 ## Uploading binaries (no GitHub Actions)
 
@@ -95,8 +118,8 @@ curl -X DELETE -H "Authorization: Bearer $UPLOAD_TOKEN" \
 ```
 
 Uploads land under `<CACHE_DIR>/uploads/<ref>/...` and **shadow GitHub
-artifacts** everywhere: download routes, `/api/targets`, and the APT/Arch/RPM
-repo builders all prefer the upload when one exists. Uploading invalidates the
+artifacts** everywhere: download routes, `/api/targets`, and the
+APT/Arch/RPM/XBPS repo builders all prefer the upload when one exists. Uploading invalidates the
 cached target/repo metadata for that ref. A successful `PUT` answers `201`
 with `{ref, product, os, arch, kind, file, size, sha256}`. Auth failures answer
 `401`, oversized bodies `413`, disabled uploads `503`.
@@ -122,6 +145,8 @@ src/index.ts      env parsing, cache warmup, Deno.serve
 src/app.ts        Elysia routes, GitHub layer, on-disk cache
 src/uploads.ts    authenticated direct-upload store + handlers (Zod-validated)
 src/validation.ts Zod schemas for params, config, and API payloads
+src/repo-plist.ts XML plist parser/serializer (XBPS metadata)
+src/repo-xbps.ts  XBPS repodata, props parsing, RSA signing
 src/tests/        one suite per area above
 src/static/index.html landing page
 ```

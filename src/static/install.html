@@ -174,6 +174,12 @@
                     Always verify the fingerprint when trusting the key. If it
                     does not match, stop and ask — do not install.
                 </p>
+                <p>
+                    Void Linux uses a separate XBPS RSA key. The
+                    <code>xbps-install -S</code> key-import prompt shows the
+                    key fingerprint; compare it with the key served by
+                    <code>/xbps/pubkey</code> before accepting.
+                </p>
 
                 <section class="panel" id="debian">
                     <h2>Ubuntu / Debian (24.04+, Debian 13+)</h2>
@@ -224,6 +230,26 @@ sudo pacman -Sy simtx</pre>
 sudo pacman -U https://manifest.simtx.net/latest/app/linux/amd64/pkg.zst</pre>
                     <p>
                         Verify: <code>pacman -Q simtx</code> and
+                        <code>simtx-cli version</code>.
+                    </p>
+                </section>
+
+                <section class="panel" id="void">
+                    <h2>Void Linux (x86_64)</h2>
+                    <pre class="cmd">
+# 1. Add the repo
+sudo mkdir -p /etc/xbps.d
+echo 'repository=https://manifest.simtx.net/xbps' | sudo tee /etc/xbps.d/10-simtx.conf &gt; /dev/null
+
+# 2. Sync. xbps prints the RSA key fingerprint and asks to import it.
+#    Compare with the X-XBPS-Fingerprint header below before answering y.
+curl -fsSI https://manifest.simtx.net/xbps/pubkey | grep -i x-xbps-fingerprint
+sudo xbps-install -S
+
+# 3. Install / update
+sudo xbps-install simtx</pre>
+                    <p>
+                        Verify: <code>xbps-query -p pkgver simtx</code> and
                         <code>simtx-cli version</code>.
                     </p>
                 </section>
@@ -303,6 +329,13 @@ chmod +x simtx-cli
                             on first run → answer <code>y</code> to the
                             key-import prompt (or pre-import with
                             <code>rpm --import</code>), then retry.
+                        </li>
+                        <li>
+                            Void <code>xbps-install -S</code>: if the RSA key
+                            import prompt appears, compare its fingerprint with
+                            the <code>X-XBPS-Fingerprint</code> header from
+                            <code>/xbps/pubkey</code>; answer <code>y</code>
+                            only on a match.
                         </li>
                         <li>
                             Old Ubuntu (22.04) / Debian 12: unsupported — the

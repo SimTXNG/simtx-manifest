@@ -26,6 +26,9 @@ Deno.test("matchesTarget: app/linux kinds", () => {
   assert(!matchesTarget("app", "linux", "deb", "simtx-1.0_amd64.rpm"));
   assert(matchesTarget("app", "linux", "rpm", "simtx-1.0.rpm"));
   assert(!matchesTarget("app", "linux", "rpm", "simtx-1.0.deb"));
+  assert(matchesTarget("app", "linux", "xbps", "simtx-1.0_1.x86_64.xbps"));
+  assert(matchesTarget("app", "linux", "xbps", "SIMTX-1.0_1.X86_64.XBPS"));
+  assert(!matchesTarget("app", "linux", "xbps", "simtx-1.0_1.x86_64.xbps.sig2"));
   assert(matchesTarget("app", "linux", "appimage", "SimTX-x86_64.AppImage"));
   assert(!matchesTarget("app", "linux", "appimage", "simtx.deb"));
   for (const kind of ["pkg.zst", "pkg.tar.zst", "arch"]) {
@@ -76,6 +79,7 @@ Deno.test("canonicalKind: full alias matrix", () => {
     ["app", "linux", "deb", "deb"],
     ["app", "linux", "appimage", "appimage"],
     ["app", "linux", "rpm", "rpm"],
+    ["app", "linux", "xbps", "xbps"],
     ["app", "linux", "pkg.zst", "pkg.zst"],
     ["app", "linux", "pkg.tar.zst", "pkg.zst"],
     ["app", "linux", "arch", "pkg.zst"],

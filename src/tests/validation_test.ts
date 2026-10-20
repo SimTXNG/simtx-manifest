@@ -43,6 +43,14 @@ Deno.test("DownloadParamsSchema: canonical output incl. aliases + case folding",
       { ref: "x", product: "app", os: "macos", arch: "arm64", kind: "dmg" },
     ],
     [
+      { ref: "x", product: "app", os: "linux", arch: "amd64", kind: "xbps" },
+      { ref: "x", product: "app", os: "linux", arch: "amd64", kind: "xbps" },
+    ],
+    [
+      { ref: "x", product: "app", os: "linux", arch: "amd64", kind: "XBPS" },
+      { ref: "x", product: "app", os: "linux", arch: "amd64", kind: "xbps" },
+    ],
+    [
       { ref: "x", product: "app", os: "linux", arch: "amd64", kind: "pkg.tar.zst" },
       { ref: "x", product: "app", os: "linux", arch: "amd64", kind: "pkg.zst" },
     ],
@@ -195,7 +203,7 @@ Deno.test("GitHub payload schemas: reject malformed data", () => {
 });
 
 Deno.test("TargetDefSchema: shipped table entries are all valid", () => {
-  assertEquals(TARGET_DEFS.length, 12);
+  assertEquals(TARGET_DEFS.length, 13);
   for (const t of TARGET_DEFS) {
     assert(TargetDefSchema.safeParse(t).success, JSON.stringify(t));
   }

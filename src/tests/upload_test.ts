@@ -262,6 +262,22 @@ Deno.test("uploads module: zod filename/body schemas", () => {
     parseUploadFilename("simtx_1_amd64.deb", "app", "linux", "deb", debOnly),
     "simtx_1_amd64.deb",
   );
+  const xbpsOnly = (_p: string, _o: string, _k: string, n: string) =>
+    n.endsWith(".xbps");
+  assertEquals(
+    parseUploadFilename(null, "app", "linux", "xbps", xbpsOnly),
+    "upload.xbps",
+  );
+  assertEquals(
+    parseUploadFilename(
+      "simtx-1.0_1.x86_64.xbps",
+      "app",
+      "linux",
+      "xbps",
+      xbpsOnly,
+    ),
+    "simtx-1.0_1.x86_64.xbps",
+  );
   for (const bad of ["../x.deb", "a/b.deb", "a\\b.deb", "evil.exe", "", ".."]) {
     const err = assertThrows(
       () => parseUploadFilename(bad, "app", "linux", "deb", debOnly),

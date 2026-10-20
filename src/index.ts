@@ -27,6 +27,9 @@ const parsed = EnvSchema.safeParse({
   LATEST_REF: env("LATEST_REF"),
   VERSION_RETURN: env("VERSION_RETURN"),
   SIGNING_KEY_FILE: env("SIGNING_KEY_FILE"),
+  XBPS_SIGNING_KEY_FILE: env("XBPS_SIGNING_KEY_FILE"),
+  XBPS_SIGNED_BY: env("XBPS_SIGNED_BY"),
+  XBPS_PASSPHRASE: env("XBPS_PASSPHRASE"),
   UPLOAD_TOKEN: env("UPLOAD_TOKEN"),
   UPLOAD_MAX_MB: env("UPLOAD_MAX_MB"),
 });
@@ -57,6 +60,32 @@ if (cfg.SIGNING_KEY_FILE) {
   }
 }
 
+// XBPS uses a separate RSA key from the Ed25519 package-signing key.
+// Absent → /xbps repo routes answer 503; direct .xbps downloads still serve.
+let xbpsSigningKey: string | undefined;
+if (cfg.XBPS_SIGNING_KEY_FILE) {
+  try {
+    xbpsSigningKey =
+      (await Deno.readTextFile(cfg.XBPS_SIGNING_KEY_FILE)).trim() || undefined;
+  } catch (e) {
+    console.error(`Cannot read XBPS_SIGNING_KEY_FILE: ${(e as Error).message}`);
+    Deno.exit(1);
+  }
+  const { loadXbpsSigningKey } = await import("./repo-xbps.ts");
+  try {
+    const key = loadXbpsSigningKey(
+      xbpsSigningKey!,
+      cfg.XBPS_PASSPHRASE,
+    );
+    console.log(
+      `xbps signing key OK (${key.bits} bit, ${key.fingerprint})`,
+    );
+  } catch (e) {
+    console.error(`Invalid XBPS signing key: ${(e as Error).message}`);
+    Deno.exit(1);
+  }
+}
+
 const REPO = cfg.GITHUB_REPO;
 const HOST = cfg.HOST;
 const PORT = cfg.PORT;
@@ -80,6 +109,9 @@ const ctx = createApp({
   latestRef: cfg.LATEST_REF,
   versionReturn: cfg.VERSION_RETURN?.trim() || undefined,
   signingKey,
+  xbpsSigningKey,
+  xbpsSignedBy: cfg.XBPS_SIGNED_BY?.trim() || undefined,
+  xbpsPassphrase: cfg.XBPS_PASSPHRASE,
   uploadToken: cfg.UPLOAD_TOKEN?.trim() || undefined,
   uploadMaxBytes: cfg.UPLOAD_MAX_MB * 1024 * 1024,
 });

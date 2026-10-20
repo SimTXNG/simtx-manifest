@@ -55,7 +55,7 @@ export function canonicalKind(
 ): string | null {
   const k = aliasKind(kind);
   if (product === "app" && os === "linux") {
-    return ["deb", "appimage", "appimage-zsync", "appimage-sha256", "rpm", "pkg.zst", "pkg.zst.sig"].includes(k) ? k : null;
+    return ["deb", "appimage", "appimage-zsync", "appimage-sha256", "rpm", "xbps", "pkg.zst", "pkg.zst.sig"].includes(k) ? k : null;
   }
   if (product === "app" && os === "windows") {
     return k === "exe" ? k : null;
@@ -129,6 +129,9 @@ export const EnvSchema = z.object({
   LATEST_REF: z.string().optional(),
   VERSION_RETURN: z.string().optional(),
   SIGNING_KEY_FILE: z.string().optional(),
+  XBPS_SIGNING_KEY_FILE: z.string().optional(),
+  XBPS_SIGNED_BY: z.string().optional(),
+  XBPS_PASSPHRASE: z.string().optional(),
   UPLOAD_TOKEN: z.string().optional(),
   UPLOAD_MAX_MB: z.coerce.number().positive().default(500),
 });
@@ -150,6 +153,9 @@ export const AppOptionsSchema = z.object({
   latestRef: z.string().optional(),
   versionReturn: z.string().optional(),
   signingKey: z.string().optional(),
+  xbpsSigningKey: z.string().optional(),
+  xbpsSignedBy: z.string().optional(),
+  xbpsPassphrase: z.string().optional(),
   uploadToken: z.string().min(1).optional(),
   uploadMaxBytes: z.number().finite().positive().optional(),
 });
