@@ -157,12 +157,18 @@ export async function parseXbpsPackage(
     );
   }
 
+  // Some packages store the full `name-version_rev` in pkgver (Void's
+  // convention); the fixture and older builds store just `version_rev`.
+  // XBPS builds download paths from pkgver, so never double the name.
+  const fullPkgver = pkgver.startsWith(`${pkgname}-`)
+    ? pkgver
+    : `${pkgname}-${pkgver}`;
   return {
     props: parsed,
     pkgname,
     pkgver,
     architecture,
-    fileName: `${pkgname}-${pkgver}.${architecture}.xbps`,
+    fileName: `${fullPkgver}.${architecture}.xbps`,
   };
 }
 

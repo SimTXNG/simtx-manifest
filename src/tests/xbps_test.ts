@@ -14,7 +14,7 @@ import {
 import { parsePlist, serializePlist } from "../repo-plist.ts";
 import type { PlistDict } from "../repo-plist.ts";
 import { gunzipBytes, gzipBytes, sha256Hex } from "../repo-util.ts";
-import { listTar } from "../repo-tar.ts";
+import { listTar, writeTar } from "../repo-tar.ts";
 import { req, seedUploadFixture, testCtx } from "./util.ts";
 
 const FIX = new URL("./fixtures/", import.meta.url);
@@ -101,6 +101,21 @@ Deno.test("xbps: parse fixture props", async () => {
   assertEquals(pkg.props["installed_size"], 1234);
   assertEquals(pkg.props.run_depends, ["glibc>=2.38_1"]);
   assertEquals(pkg.props.preserve, true);
+});
+
+Deno.test("xbps: full pkgver does not duplicate the package name in filename", async () => {
+  const props: PlistDict = {
+    pkgname: "simtx",
+    pkgver: "simtx-0.1.0alpha13_1",
+    architecture: "x86_64",
+    version: "0.1.0",
+    short_desc: "SimTX",
+  };
+  const tar = writeTar({
+    "props.plist": new TextEncoder().encode(serializePlist(props)),
+  });
+  const pkg = await parseXbpsPackage(tar);
+  assertEquals(pkg.fileName, "simtx-0.1.0alpha13_1.x86_64.xbps");
 });
 
 Deno.test("xbps: accepts gzip and uncompressed packages", async () => {
