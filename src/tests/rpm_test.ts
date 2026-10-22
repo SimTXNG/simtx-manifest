@@ -4,6 +4,7 @@ import {
   buildOtherXml,
   buildPrimaryXml,
   buildRepomdXml,
+  flagName,
   parseRpm,
   type RpmInfo,
 } from "../repo-rpm.ts";
@@ -36,7 +37,10 @@ const info: RpmInfo = {
   arch: "x86_64",
   sourcerpm: "simtx-0.1.0~alpha5-1.src.rpm",
   provides: [{ name: "simtx", flags: 8, ver: "0.1.0~alpha5-1" }],
-  requires: [{ name: "gtk4", flags: 0, ver: "" }],
+  requires: [
+    { name: "gtk4", flags: 0, ver: "" },
+    { name: "rpmlib(CompressedFileNames)", flags: 0x100000a, ver: "3.0.4-1" },
+  ],
   conflicts: [],
   obsoletes: [],
   files: ["/usr/bin/simtx"],
@@ -70,6 +74,17 @@ Deno.test("rpm: parse real nfpm-built rpm", async () => {
   assert(p.files.includes("/usr/bin/simtx"));
 });
 
+Deno.test("rpm: flagName RPMSENSE mapping", () => {
+  assertEquals(flagName(0), "");
+  assertEquals(flagName(2), "LT"); // RPMSENSE_LESS
+  assertEquals(flagName(4), "GT"); // RPMSENSE_GREATER
+  assertEquals(flagName(8), "EQ"); // RPMSENSE_EQUAL
+  assertEquals(flagName(10), "LE"); // RPMSENSE_LESS | RPMSENSE_EQUAL
+  assertEquals(flagName(12), "GE"); // RPMSENSE_GREATER | RPMSENSE_EQUAL
+  // RPMSENSE_RPMLIB (0x1000000) | RPMSENSE_LESS (0x2) | RPMSENSE_EQUAL (0x8)
+  assertEquals(flagName(0x100000a), "LE");
+});
+
 Deno.test("rpm: primary xml golden", () => {
   const xml = buildPrimaryXml([{
     info,
@@ -84,6 +99,10 @@ Deno.test("rpm: primary xml golden", () => {
   assertStringIncludes(xml, '<checksum type="sha256" pkgid="YES">abc</checksum>');
   assertStringIncludes(xml, "<rpm:entry name=\"simtx\" flags=\"EQ\" ver=\"0.1.0~alpha5\" rel=\"1\"/>");
   assertStringIncludes(xml, "<rpm:entry name=\"gtk4\"/>");
+  assertStringIncludes(
+    xml,
+    '<rpm:entry name="rpmlib(CompressedFileNames)" flags="LE" ver="3.0.4" rel="1"/>',
+  );
   assertStringIncludes(xml, "<file>/usr/bin/simtx</file>");
 });
 

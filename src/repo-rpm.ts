@@ -210,13 +210,17 @@ const xmlEsc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
-// RPMSENSE flag bits -> creatropo flag names.
-function flagName(flags: number): string {
-  const parts: string[] = [];
-  if (flags & 2) parts.push("LT");
-  if (flags & 4) parts.push("GT");
-  if (flags & 8) parts.push("EQ");
-  return parts.join(" ");
+// RPMSENSE flag bits -> createrepo flag names.
+export function flagName(flags: number): string {
+  const lt = (flags & 2) !== 0;
+  const gt = (flags & 4) !== 0;
+  const eq = (flags & 8) !== 0;
+  if (lt && eq) return "LE";
+  if (gt && eq) return "GE";
+  if (lt) return "LT";
+  if (gt) return "GT";
+  if (eq) return "EQ";
+  return "";
 }
 
 function depXml(
