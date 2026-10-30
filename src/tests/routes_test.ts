@@ -219,7 +219,7 @@ Deno.test("routes: missing upload -> 404", async () => {
 Deno.test("routes: api/latest shape + status alias", async () => {
   await withTempDir(async (dir) => {
     const linux = await seedUpload(dir, "latest", "app", "linux", "amd64", "deb", "a.deb", "x");
-    const windows = await seedUpload(dir, "latest", "app", "windows", "amd64", "exe", "a.exe", "x");
+    const windows = await seedUpload(dir, "latest", "app", "windows", "amd64", "installer", "simtx-amd64-installer.exe", "x");
     const macos = await seedUpload(dir, "latest", "app", "macos", "arm64", "dmg", "a.dmg", "x");
     await Deno.utime(linux, new Date("2026-01-01T00:00:00Z"), new Date("2026-01-01T00:00:00Z"));
     await Deno.utime(windows, new Date("2026-03-01T00:00:00Z"), new Date("2026-03-01T00:00:00Z"));

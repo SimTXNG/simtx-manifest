@@ -58,7 +58,9 @@ export function canonicalKind(
     return ["deb", "appimage", "appimage-zsync", "appimage-sha256", "rpm", "xbps", "pkg.zst", "pkg.zst.sig"].includes(k) ? k : null;
   }
   if (product === "app" && os === "windows") {
-    return k === "exe" ? k : null;
+    if (k === "installer" || k === "exe") return "installer";
+    if (k === "standalone" || k === "binary" || k === "portable") return "standalone";
+    return null;
   }
   if (product === "app" && os === "macos") {
     return k === "dmg" ? k : null;

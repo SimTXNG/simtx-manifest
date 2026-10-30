@@ -40,10 +40,17 @@ Deno.test("matchesTarget: app/linux kinds", () => {
 });
 
 Deno.test("matchesTarget: app/windows excludes standalone CLI", () => {
+  assert(matchesTarget("app", "windows", "installer", "SimTX-Setup.exe"));
+  assert(matchesTarget("app", "windows", "installer", "simtx-amd64-installer.exe"));
   assert(matchesTarget("app", "windows", "exe", "SimTX-Setup.exe"));
-  assert(!matchesTarget("app", "windows", "exe", "simtx-cli.exe"));
-  assert(!matchesTarget("app", "windows", "exe", "SIMTX-CLI.EXE"));
-  assert(!matchesTarget("app", "windows", "exe", "app.deb"));
+  assert(!matchesTarget("app", "windows", "installer", "simtx.exe"));
+  assert(matchesTarget("app", "windows", "standalone", "simtx.exe"));
+  assert(matchesTarget("app", "windows", "binary", "simtx.exe"));
+  assert(!matchesTarget("app", "windows", "standalone", "SimTX-Setup.exe"));
+  assert(!matchesTarget("app", "windows", "installer", "simtx-cli.exe"));
+  assert(!matchesTarget("app", "windows", "standalone", "simtx-cli.exe"));
+  assert(!matchesTarget("app", "windows", "installer", "SIMTX-CLI.EXE"));
+  assert(!matchesTarget("app", "windows", "installer", "app.deb"));
 });
 
 Deno.test("matchesTarget: app/macos is dmg only (kind unchecked here)", () => {
@@ -83,9 +90,12 @@ Deno.test("canonicalKind: full alias matrix", () => {
     ["app", "linux", "arch", "pkg.zst"],
     ["app", "linux", "exe", null],
     ["app", "linux", "dmg", null],
-    ["app", "windows", "exe", "exe"],
+    ["app", "windows", "installer", "installer"],
+    ["app", "windows", "exe", "installer"],
+    ["app", "windows", "standalone", "standalone"],
+    ["app", "windows", "binary", "standalone"],
+    ["app", "windows", "portable", "standalone"],
     ["app", "windows", "deb", null],
-    ["app", "windows", "binary", null],
     ["app", "macos", "dmg", "dmg"],
     ["app", "macos", "exe", null],
     ["cli", "linux", "binary", "binary"],

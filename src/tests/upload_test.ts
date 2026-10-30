@@ -167,6 +167,65 @@ Deno.test("uploads: serve uploaded file + appear in /api/targets", async () => {
   });
 });
 
+Deno.test("uploads: windows installer and standalone binary do not overwrite each other", async () => {
+  await withTempDir(async (dir) => {
+    const ctx = testCtx(dir, { uploadToken: "secret" });
+
+    // Upload installer
+    const upInst = await ctx.app.handle(
+      put(
+        "/upload/latest/app/windows/amd64/installer?filename=simtx-amd64-installer.exe",
+        "installer-bytes",
+        "secret",
+      ),
+    );
+    assertEquals(upInst.status, 201);
+
+    // Upload standalone
+    const upStand = await ctx.app.handle(
+      put(
+        "/upload/latest/app/windows/amd64/standalone?filename=simtx.exe",
+        "standalone-bytes",
+        "secret",
+      ),
+    );
+    assertEquals(upStand.status, 201);
+
+    // Upload CLI
+    const upCli = await ctx.app.handle(
+      put(
+        "/upload/latest/cli/windows/amd64/binary?filename=simtx-cli.exe",
+        "cli-bytes",
+        "secret",
+      ),
+    );
+    assertEquals(upCli.status, 201);
+
+    // Verify installer still exists and is accessible via canonical and alias 'exe'
+    const getInst = await ctx.app.handle(req("/latest/app/windows/amd64/installer"));
+    assertEquals(getInst.status, 200);
+    assertEquals(await getInst.text(), "installer-bytes");
+
+    const getExe = await ctx.app.handle(req("/latest/app/windows/amd64/exe"));
+    assertEquals(getExe.status, 200);
+    assertEquals(await getExe.text(), "installer-bytes");
+
+    // Verify standalone exists and is accessible via canonical and alias 'binary'
+    const getStand = await ctx.app.handle(req("/latest/app/windows/amd64/standalone"));
+    assertEquals(getStand.status, 200);
+    assertEquals(await getStand.text(), "standalone-bytes");
+
+    const getStandBin = await ctx.app.handle(req("/latest/app/windows/amd64/binary"));
+    assertEquals(getStandBin.status, 200);
+    assertEquals(await getStandBin.text(), "standalone-bytes");
+
+    // Verify CLI exists
+    const getCli = await ctx.app.handle(req("/latest/cli/windows/amd64/binary"));
+    assertEquals(getCli.status, 200);
+    assertEquals(await getCli.text(), "cli-bytes");
+  });
+});
+
 Deno.test("uploads: DELETE removes file, second DELETE 404s", async () => {
   await withTempDir(async (dir) => {
     const ctx = testCtx(dir, { uploadToken: "secret" });

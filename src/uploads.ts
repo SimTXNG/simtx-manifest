@@ -63,7 +63,10 @@ export function defaultUploadFilename(
   if (product === "cli") {
     return os === "windows" ? "simtx-cli.exe" : "simtx-cli";
   }
-  if (os === "windows") return "upload.exe";
+  if (os === "windows") {
+    if (kind === "installer") return "upload-installer.exe";
+    return "upload.exe";
+  }
   if (os === "macos") return "upload.dmg";
   switch (kind) {
     case "deb":

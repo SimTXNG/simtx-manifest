@@ -26,7 +26,7 @@ Canonical shape, five segments:
 /v1.2.3/cli/windows/amd64/binary
 ```
 
-Kinds per platform: `deb`, `rpm`, `xbps`, `pkg.zst`, `pkg.zst.sig`, `appimage`, `appimage-zsync`, `appimage-sha256` on Linux; `exe` on Windows; `dmg` on macOS (Apple Silicon only). The CLI ships as `binary`. Aliases work too: `x86_64` for `amd64`, `aarch64` for `arm64`, `pkg.tar.zst` and `arch` for `pkg.zst`.
+Kinds per platform: `deb`, `rpm`, `xbps`, `pkg.zst`, `pkg.zst.sig`, `appimage`, `appimage-zsync`, `appimage-sha256` on Linux; `installer`, `standalone` on Windows; `dmg` on macOS (Apple Silicon only). The CLI ships as `binary`. Aliases work too: `x86_64` for `amd64`, `aarch64` for `arm64`, `pkg.tar.zst` and `arch` for `pkg.zst`, `exe` for `installer` on Windows, and `binary` or `portable` for `standalone` on Windows.
 
 A legacy four-segment form still works for the desktop app:
 

@@ -154,7 +154,7 @@ Deno.test("createApp: invalid options throw HttpError 422 fast", async () => {
 });
 
 Deno.test("TargetDefSchema: shipped table entries are all valid", () => {
-  assertEquals(TARGET_DEFS.length, 13);
+  assertEquals(TARGET_DEFS.length, 14);
   for (const t of TARGET_DEFS) {
     assert(TargetDefSchema.safeParse(t).success, JSON.stringify(t));
   }

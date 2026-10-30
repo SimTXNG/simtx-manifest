@@ -372,14 +372,26 @@
                         </div>
                         <div
                             class="dl-item"
-                            data-target="app/windows/amd64/exe"
+                            data-target="app/windows/amd64/installer"
                         >
-                            <h3>Windows <code>.exe</code></h3>
+                            <h3>Windows <code>.exe</code> Installer</h3>
                             <p>Windows 64-bit installer (amd64)</p>
                             <a
                                 class="btn small"
-                                href="/latest/app/windows/amd64/exe"
-                                >Download .exe</a
+                                href="/latest/app/windows/amd64/installer"
+                                >Download Installer</a
+                            >
+                        </div>
+                        <div
+                            class="dl-item"
+                            data-target="app/windows/amd64/standalone"
+                        >
+                            <h3>Windows <code>.exe</code> Portable</h3>
+                            <p>Standalone binary, no install (amd64)</p>
+                            <a
+                                class="btn small"
+                                href="/latest/app/windows/amd64/standalone"
+                                >Download Portable</a
                             >
                         </div>
                         <div class="dl-item" data-target="app/macos/arm64/dmg">
@@ -482,7 +494,7 @@ chmod +x simtx-cli
             const isWin = /Win/i.test(ua);
             const isMac = /Mac/i.test(ua);
             const PRIMARY = isWin
-                ? "app/windows/amd64/exe"
+                ? "app/windows/amd64/installer"
                 : isMac
                   ? "app/macos/arm64/dmg"
                   : "app/linux/amd64/deb";
@@ -493,6 +505,8 @@ chmod +x simtx-cli
                   : "DOWNLOAD (.deb) — Linux 64-bit";
             const FALLBACK_ORDER = [
                 PRIMARY,
+                "app/windows/amd64/installer",
+                "app/windows/amd64/standalone",
                 "app/windows/amd64/exe",
                 "app/macos/arm64/dmg",
                 "app/linux/amd64/deb",

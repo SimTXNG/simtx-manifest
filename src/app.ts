@@ -94,7 +94,11 @@ export function matchesTarget(
     return false;
   }
   if (os === "windows") {
-    return n.endsWith(".exe") && !isCliWindows(n);
+    if (!n.endsWith(".exe") || isCliWindows(n)) return false;
+    const isInst = n.includes("installer") || n.includes("setup");
+    if (kind === "installer" || kind === "exe") return isInst;
+    if (kind === "standalone" || kind === "binary" || kind === "portable") return !isInst;
+    return false;
   }
   if (os === "macos") {
     return n.endsWith(".dmg");
@@ -132,7 +136,8 @@ export const TARGET_DEFS: TargetDef[] = TargetDefSchema.array().parse([
   { product: "app", os: "linux", arch: "amd64", kind: "appimage" },
   { product: "app", os: "linux", arch: "amd64", kind: "appimage-zsync" },
   { product: "app", os: "linux", arch: "amd64", kind: "appimage-sha256" },
-  { product: "app", os: "windows", arch: "amd64", kind: "exe" },
+  { product: "app", os: "windows", arch: "amd64", kind: "installer" },
+  { product: "app", os: "windows", arch: "amd64", kind: "standalone" },
   { product: "app", os: "macos", arch: "arm64", kind: "dmg" },
   { product: "cli", os: "linux", arch: "amd64", kind: "binary" },
   { product: "cli", os: "windows", arch: "amd64", kind: "binary" },
